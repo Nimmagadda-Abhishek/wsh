@@ -13,6 +13,10 @@ Requirements: Node.js 18 or newer and a Supabase project.
 
 The API listens on port 4000 by default. `GET /health` reports service status.
 
+## Bootstrap the first administrator
+
+First create an account in the portal and confirm its email. Set the backend root `.env` values, including `SUPABASE_SERVICE_ROLE_KEY`, then run `npm run seed:admin -- admin@example.com`. The script promotes only an existing confirmed account and does not create or change its password. Sign into the portal with that account’s normal sign-in method.
+
 ## Pages and frontend setup
 
 The frontend includes `/#/profile/edit`, `/#/businesses/manage`, `/#/businesses/:id/edit`, `/#/auth/verified`, and `/#/auth/reset-password`. Existing dashboard and homepage links navigate to these routes. Set `VITE_API_URL` in the frontend to the API origin (local: `http://localhost:4000`).

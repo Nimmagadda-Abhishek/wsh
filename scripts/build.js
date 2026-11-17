@@ -4,6 +4,7 @@ const { spawnSync } = require('node:child_process');
 const root = path.join(__dirname, '..');
 const files = [
   'server.js',
+  'seed-admin.js',
   'src/controllers/authController.js',
   'src/controllers/profileController.js',
   'src/controllers/businessController.js',

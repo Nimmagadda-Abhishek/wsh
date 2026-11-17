@@ -322,6 +322,11 @@ CREATE POLICY "profiles_update_own"
     USING (auth.uid() = id)
     WITH CHECK (auth.uid() = id);
 
+-- Restrict user-scoped edits to profile fields; role changes stay server-admin only.
+REVOKE UPDATE ON public.profiles FROM anon, authenticated;
+GRANT UPDATE (username, full_name, bio, avatar_url, phone, location, city, country, website, is_profile_complete, updated_at)
+    ON public.profiles TO authenticated;
+
 -- Users can insert their own profile (triggered on signup)
 CREATE POLICY "profiles_insert_own"
     ON public.profiles FOR INSERT

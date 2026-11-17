@@ -35,3 +35,11 @@ test('public category lookup is registered before protected home routes', () => 
   const routes = read('src/routes/home.js');
   assert.ok(routes.indexOf("router.get('/categories'") < routes.indexOf('router.use(authMiddleware)'));
 });
+
+test('admin bootstrap requires a confirmed account and service-role credentials', () => {
+  const script = read('seed-admin.js');
+  assert.match(script, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(script, /email_confirmed_at/);
+  assert.match(script, /update\(\{ role: 'admin' \}\)/);
+  assert.match(read('supabase/schema.sql'), /GRANT UPDATE \(username, full_name, bio, avatar_url, phone, location, city, country, website, is_profile_complete, updated_at\)/);
+});
