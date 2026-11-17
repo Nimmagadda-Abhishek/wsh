@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
 const { getFeed, getFeatured, getStats, likePost, unlikePost } = require('../controllers/homeController');
+const { listCategories } = require('../controllers/businessController');
+
+// Category lookup is public and is shared by business listing forms.
+router.get('/categories', listCategories);
 
 // All home routes require authentication
 router.use(authMiddleware);

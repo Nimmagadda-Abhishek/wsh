@@ -50,7 +50,10 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     avatar_url          TEXT,
     phone               TEXT,
     location            TEXT,
+    city                TEXT,
+    country             TEXT,
     website             TEXT,
+    role                TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'business_owner', 'admin')),
     is_profile_complete BOOLEAN NOT NULL DEFAULT false,
     subscription_id     UUID REFERENCES public.user_subscriptions(id) ON DELETE SET NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -59,6 +62,76 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 
 CREATE INDEX IF NOT EXISTS idx_profiles_username  ON public.profiles (username);
 CREATE INDEX IF NOT EXISTS idx_profiles_full_name ON public.profiles USING gin (full_name gin_trgm_ops);
+
+-- ============================================================
+-- 3a. BUSINESSES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.business_categories (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL UNIQUE,
+    slug TEXT NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT true
+);
+INSERT INTO public.business_categories (name, slug, sort_order) VALUES
+    ('Healthcare', 'healthcare', 1),
+    ('Real Estate', 'real-estate', 2),
+    ('Technology', 'technology', 3),
+    ('Manufacturing', 'manufacturing', 4),
+    ('Agriculture', 'agriculture', 5),
+    ('Education', 'education', 6),
+    ('Finance', 'finance', 7),
+    ('Automobile', 'automobile', 8),
+    ('Professional Services', 'professional-services', 9)
+ON CONFLICT (slug) DO NOTHING;
+ALTER TABLE public.business_categories ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS business_categories_public_read ON public.business_categories;
+CREATE POLICY business_categories_public_read ON public.business_categories FOR SELECT TO anon, authenticated USING (is_active = true);
+
+CREATE TABLE IF NOT EXISTS public.businesses (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    category_id UUID REFERENCES public.business_categories(id),
+    slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL CHECK (char_length(name) BETWEEN 2 AND 120),
+    description TEXT,
+    logo_url TEXT,
+    cover_url TEXT,
+    email TEXT,
+    phone TEXT,
+    website TEXT,
+    address TEXT,
+    city TEXT,
+    state TEXT,
+    country TEXT,
+    postal_code TEXT,
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+    hours JSONB NOT NULL DEFAULT '{}'::jsonb,
+    social_links JSONB NOT NULL DEFAULT '{}'::jsonb,
+    tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'suspended')),
+    is_verified BOOLEAN NOT NULL DEFAULT false,
+    is_featured BOOLEAN NOT NULL DEFAULT false,
+    plan_code TEXT NOT NULL DEFAULT 'free' CHECK (plan_code IN ('free', 'pro', 'premium')),
+    avg_rating NUMERIC(3,2) NOT NULL DEFAULT 0,
+    review_count INTEGER NOT NULL DEFAULT 0,
+    view_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_businesses_owner_id ON public.businesses(owner_id);
+CREATE INDEX IF NOT EXISTS idx_businesses_status_city ON public.businesses(status, city);
+ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS businesses_select_published_or_owner ON public.businesses;
+CREATE POLICY businesses_select_published_or_owner ON public.businesses FOR SELECT TO authenticated
+    USING (status = 'published' OR auth.uid() = owner_id);
+DROP POLICY IF EXISTS businesses_insert_owner ON public.businesses;
+CREATE POLICY businesses_insert_owner ON public.businesses FOR INSERT TO authenticated
+    WITH CHECK (auth.uid() = owner_id);
+DROP POLICY IF EXISTS businesses_update_owner ON public.businesses;
+CREATE POLICY businesses_update_owner ON public.businesses FOR UPDATE TO authenticated
+    USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
 
 -- ============================================================
 -- 4. EVENTS
@@ -206,6 +279,9 @@ $$;
 
 -- Enable RLS on all tables
 ALTER TABLE public.profiles            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS city TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS country TEXT;
 ALTER TABLE public.subscription_plans  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_subscriptions  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.events              ENABLE ROW LEVEL SECURITY;
@@ -237,12 +313,14 @@ CREATE POLICY "profiles_select_authenticated"
     TO authenticated
     USING (true);
 
--- Users can only update their own profile AND must have an active subscription
-CREATE POLICY "profiles_update_own_with_subscription"
+-- Profile edits do not require a paid subscription (matches the API contract).
+DROP POLICY IF EXISTS "profiles_update_own_with_subscription" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_update_own" ON public.profiles;
+CREATE POLICY "profiles_update_own"
     ON public.profiles FOR UPDATE
     TO authenticated
-    USING (auth.uid() = id AND public.has_active_subscription(auth.uid()))
-    WITH CHECK (auth.uid() = id AND public.has_active_subscription(auth.uid()));
+    USING (auth.uid() = id)
+    WITH CHECK (auth.uid() = id);
 
 -- Users can insert their own profile (triggered on signup)
 CREATE POLICY "profiles_insert_own"

@@ -4,7 +4,7 @@ REST API reference for the Express backend.
 
 ## Base URL and setup
 
-The default local base URL is `http://localhost:3000`. Set `PORT` to change it.
+The default local base URL is `http://localhost:4000`. Set `PORT` to change it.
 The server also requires `SUPABASE_URL` and `SUPABASE_ANON_KEY`; configure
 `SUPABASE_SERVICE_ROLE_KEY` for server-side admin database operations. See
 [.env.example](./.env.example). Apply [supabase/schema.sql](./supabase/schema.sql)
@@ -147,6 +147,10 @@ Set a new password using the access token provided through the reset flow.
 
 **Success `200`** — `data.message`.
 
+### Auth result pages
+
+The React frontend routes are `/#/auth/verified` and `/#/auth/reset-password`. The verification route accepts the Supabase callback tokens. The reset route sends the recovery access token as `Authorization: Bearer <access_token>` with `{ "password": "..." }`.
+
 ## Profiles
 
 All profile endpoints require authentication.
@@ -194,6 +198,40 @@ Upload an avatar. Requires an active subscription.
 | `avatar` | file | Yes | `.jpg`, `.jpeg`, `.png`, `.webp`, or `.gif`; maximum 5 MB |
 
 **Success `200`** — `data.avatar_url` and `data.message`.
+
+### Profile page
+
+The editable profile page is available at `/#/profile/edit`. It loads the caller’s profile and saves supplied profile fields through `PATCH /api/profile` (the existing `PUT` alias remains available).
+
+## Businesses
+
+All owner endpoints require a Supabase Bearer access token.
+
+### `GET /api/businesses/categories`
+
+Public list of active business categories shown in the business editor.
+
+### `GET /api/businesses/mine`
+
+List businesses belonging to the caller, including drafts.
+
+### `POST /api/businesses`
+
+Create a draft business. `name` is required (2–120 characters); supported optional fields are `description`, `categoryId`, `email`, `phone`, `website`, `address`, `city`, `state`, `country`, `postalCode`, `latitude`, `longitude`, `hours`, `socialLinks`, `tags`, `logoUrl`, and `coverUrl`. A caller may own up to five businesses.
+
+### `GET /api/businesses/:idOrSlug`
+
+Return a published business publicly. Drafts are visible only to the owner when an authorization token is supplied.
+
+### `PATCH /api/businesses/:id`
+
+Update supplied business fields. The API checks ownership on every update.
+
+### `POST /api/businesses/:id/publish` and `POST /api/businesses/:id/unpublish`
+
+Publish validates description, category, city, and at least one contact method (email or phone), returning `422` with missing fields if incomplete. Unpublish returns the business to draft.
+
+The owner pages are available at `/#/businesses/manage` and `/#/businesses/:id/edit`.
 
 ## Home
 

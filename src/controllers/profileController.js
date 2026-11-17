@@ -28,7 +28,7 @@ async function getOwnProfile(req, res) {
       .from('profiles')
       .select(`
         id, username, full_name, bio, avatar_url,
-        phone, location, website, is_profile_complete,
+        phone, location, city, country, website, is_profile_complete,
         created_at, updated_at,
         user_subscriptions!profiles_subscription_id_fkey (
           status, expires_at,
@@ -83,12 +83,19 @@ async function getPublicProfile(req, res) {
 }
 
 /**
- * PUT /api/profile
- * Update the authenticated user's profile. Requires active subscription.
+ * PATCH /api/profile
+ * Update the authenticated user's profile.
  */
 async function updateProfile(req, res) {
   try {
-    const { username, full_name, bio, phone, location, website } = req.body;
+    const username = req.body.username;
+    const full_name = req.body.full_name ?? req.body.fullName;
+    const bio = req.body.bio;
+    const phone = req.body.phone;
+    const location = req.body.location ?? req.body.city;
+    const city = req.body.city;
+    const country = req.body.country;
+    const website = req.body.website;
 
     // Build update payload with only provided fields
     const updates = { updated_at: new Date().toISOString() };
@@ -97,6 +104,8 @@ async function updateProfile(req, res) {
     if (bio !== undefined) updates.bio = bio;
     if (phone !== undefined) updates.phone = phone;
     if (location !== undefined) updates.location = location;
+    if (city !== undefined) updates.city = city;
+    if (country !== undefined) updates.country = country;
     if (website !== undefined) updates.website = website;
 
     // Check if profile is "complete" after this update

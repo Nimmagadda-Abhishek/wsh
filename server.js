@@ -11,14 +11,20 @@ const homeRoutes = require('./src/routes/home');
 const searchRoutes = require('./src/routes/search');
 const eventsRoutes = require('./src/routes/events');
 const subscriptionsRoutes = require('./src/routes/subscriptions');
+const businessesRoutes = require('./src/routes/businesses');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || `${process.env.FRONTEND_URL || 'https://ws-portel.web.app'},http://localhost:5173,http://localhost:3001`)
+  .split(',').map(origin => origin.trim()).filter(Boolean);
 
 // ─── Global Middleware ────────────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Origin is not allowed by CORS'));
+  },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -48,6 +54,7 @@ app.use('/api/home', homeRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/subscriptions', subscriptionsRoutes);
+app.use('/api/businesses', businessesRoutes);
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -72,10 +79,12 @@ app.use((err, req, res, _next) => {
 });
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🚀 WSH Portal API running on port ${PORT}`);
-  console.log(`   Environment : ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   Health check: http://localhost:${PORT}/health\n`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`\n🚀 WSH Portal API running on port ${PORT}`);
+    console.log(`   Environment : ${process.env.NODE_ENV || 'development'}`);
+    console.log(`   Health check: http://localhost:${PORT}/health\n`);
+  });
+}
 
 module.exports = app;

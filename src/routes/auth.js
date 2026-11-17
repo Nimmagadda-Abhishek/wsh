@@ -6,8 +6,11 @@ const {
   logout,
   refresh,
   forgotPassword,
-  resetPassword
+  resendVerification,
+  resetPassword,
+  me
 } = require('../controllers/authController');
+const auth = require('../middleware/auth');
 
 // POST /api/auth/signup
 router.post('/signup', signup);
@@ -23,6 +26,8 @@ router.post('/refresh', refresh);
 
 // POST /api/auth/forgot-password
 router.post('/forgot-password', forgotPassword);
+router.post('/resend-verification', resendVerification);
+router.get('/me', auth, me);
 
 // POST /api/auth/reset-password
 router.post('/reset-password', resetPassword);

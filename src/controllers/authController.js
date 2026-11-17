@@ -6,7 +6,9 @@ const { supabase, supabaseAdmin } = require('../config/supabase');
  */
 async function signup(req, res) {
   try {
-    const { email, password, full_name } = req.body;
+    const { email, password, phone } = req.body;
+    const full_name = req.body.fullName ?? req.body.full_name;
+    const role = req.body.accountType === 'business_owner' ? 'business_owner' : 'user';
 
     if (!email || !password || !full_name) {
       return res.status(400).json({
@@ -29,7 +31,8 @@ async function signup(req, res) {
       email,
       password,
       options: {
-        data: { full_name }
+        data: { full_name, phone, role },
+        emailRedirectTo: process.env.EMAIL_VERIFICATION_REDIRECT_URL || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/auth/verified`
       }
     });
 
@@ -48,6 +51,8 @@ async function signup(req, res) {
         .upsert({
           id: data.user.id,
           full_name,
+          phone: phone || null,
+          role,
           is_profile_complete: false
         }, { onConflict: 'id' });
 
@@ -59,12 +64,7 @@ async function signup(req, res) {
     return res.status(201).json({
       success: true,
       data: {
-        user: {
-          id: data.user?.id,
-          email: data.user?.email,
-          full_name,
-          email_confirmed: !!data.user?.email_confirmed_at
-        },
+        user: { id: data.user?.id, email: data.user?.email },
         session: data.session
           ? {
               access_token: data.session.access_token,
@@ -72,9 +72,8 @@ async function signup(req, res) {
               expires_at: data.session.expires_at
             }
           : null,
-        message: data.session
-          ? 'Account created successfully'
-          : 'Account created. Please check your email to confirm your address.'
+        emailConfirmationRequired: !data.session,
+        message: data.session ? 'Account created successfully' : 'Account created. Please check your email to confirm your address.'
       }
     });
   } catch (err) {
@@ -238,16 +237,11 @@ async function forgotPassword(req, res) {
     }
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: process.env.PASSWORD_RESET_REDIRECT_URL || `${process.env.FRONTEND_URL || 'http://localhost:3001'}/reset-password`
+      redirectTo: process.env.PASSWORD_RESET_REDIRECT_URL || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/auth/reset-password`
     });
 
-    if (error) {
-      return res.status(400).json({
-        success: false,
-        error: 'FORGOT_PASSWORD_FAILED',
-        message: error.message
-      });
-    }
+    // Do not expose whether an account exists.
+    if (error) console.error('[AuthController.forgotPassword] Supabase rejected reset request');
 
     return res.status(200).json({
       success: true,
@@ -259,20 +253,58 @@ async function forgotPassword(req, res) {
   }
 }
 
+async function resendVerification(req, res) {
+  try {
+    const { email } = req.body;
+    if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: process.env.EMAIL_VERIFICATION_REDIRECT_URL || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/auth/verified` }
+      });
+      if (error) console.error('[AuthController.resendVerification] Supabase rejected resend request');
+    }
+    return res.status(200).json({ success: true, data: { message: 'If the account needs confirmation, a new email is on its way.' } });
+  } catch (err) {
+    console.error('[AuthController.resendVerification]', err);
+    return res.status(200).json({ success: true, data: { message: 'If the account needs confirmation, a new email is on its way.' } });
+  }
+}
+
+async function me(req, res) {
+  try {
+    const { data: profile, error } = await supabaseAdmin.from('profiles').select('full_name, role').eq('id', req.user.id).maybeSingle();
+    if (error) return res.status(500).json({ success: false, error: 'DB_ERROR', message: 'Could not load account profile' });
+    return res.json({ success: true, data: {
+      id: req.user.id,
+      email: req.user.email,
+      emailVerified: !!req.user.email_confirmed_at,
+      profile: { full_name: profile?.full_name || req.user.user_metadata?.full_name || '', role: profile?.role || 'user' }
+    } });
+  } catch (err) {
+    console.error('[AuthController.me]', err);
+    return res.status(500).json({ success: false, error: 'INTERNAL_SERVER_ERROR', message: 'Could not load account' });
+  }
+}
+
 /**
  * POST /api/auth/reset-password
  * Reset password using the token from the reset email.
- * Expects: { access_token (from email link), new_password }
+ * Accepts { password } with a Bearer recovery token, or the legacy
+ * { access_token, new_password } body used by existing integrations.
  */
 async function resetPassword(req, res) {
   try {
-    const { access_token, new_password } = req.body;
+    const access_token = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.slice(7)
+      : req.body.access_token;
+    const new_password = req.body.password ?? req.body.new_password;
 
     if (!access_token || !new_password) {
       return res.status(400).json({
         success: false,
         error: 'VALIDATION_ERROR',
-        message: 'access_token and new_password are required'
+        message: 'A recovery token and new password are required'
       });
     }
 
@@ -284,13 +316,8 @@ async function resetPassword(req, res) {
       });
     }
 
-    // Set the session using the recovery token
-    const { error: sessionError } = await supabase.auth.setSession({
-      access_token,
-      refresh_token: access_token
-    });
-
-    if (sessionError) {
+    const { data: authData, error: sessionError } = await supabase.auth.getUser(access_token);
+    if (sessionError || !authData?.user) {
       return res.status(400).json({
         success: false,
         error: 'INVALID_TOKEN',
@@ -298,7 +325,18 @@ async function resetPassword(req, res) {
       });
     }
 
-    const { error } = await supabase.auth.updateUser({ password: new_password });
+    // Supabase verifies the token above; inspect its signed AMR claim to ensure
+    // this endpoint only accepts account-recovery sessions, not regular logins.
+    const tokenClaims = JSON.parse(Buffer.from(access_token.split('.')[1], 'base64url').toString('utf8'));
+    const isRecoverySession = Array.isArray(tokenClaims.amr) && tokenClaims.amr.some(method => method?.method === 'recovery');
+    if (!isRecoverySession) {
+      return res.status(401).json({ success: false, error: 'RECOVERY_TOKEN_REQUIRED', message: 'Use the password recovery link from your email.' });
+    }
+
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(503).json({ success: false, error: 'CONFIGURATION_ERROR', message: 'Password reset is unavailable' });
+    }
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(authData.user.id, { password: new_password });
 
     if (error) {
       return res.status(400).json({
@@ -318,4 +356,4 @@ async function resetPassword(req, res) {
   }
 }
 
-module.exports = { signup, login, logout, refresh, forgotPassword, resetPassword };
+module.exports = { signup, login, logout, refresh, forgotPassword, resendVerification, resetPassword, me };

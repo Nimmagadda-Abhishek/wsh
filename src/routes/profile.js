@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
-const requireSubscription = require('../middleware/subscription');
 const {
   getOwnProfile,
   getPublicProfile,
@@ -23,10 +22,11 @@ router.get('/', getOwnProfile);
 // GET /api/profile/:userId  — public profile view, auth but no subscription needed
 router.get('/:userId', getPublicProfile);
 
-// PUT /api/profile  — requires subscription
-router.put('/', requireSubscription, updateProfile);
+// PUT is retained for existing clients; PATCH follows the supplied API contract.
+router.put('/', updateProfile);
+router.patch('/', updateProfile);
 
 // POST /api/profile/avatar  — requires subscription
-router.post('/avatar', requireSubscription, upload.single('avatar'), uploadAvatar);
+router.post('/avatar', upload.single('file'), uploadAvatar);
 
 module.exports = router;
