@@ -1,476 +1,275 @@
--- ============================================================
--- WSH Portal — Full Database Schema
--- Run this in the Supabase SQL Editor to set up the database.
--- ============================================================
+-- =====================================================================
+-- WS Portal – Supabase schema. Run in: Supabase Dashboard > SQL Editor
+-- =====================================================================
+create extension if not exists pg_trgm;
 
--- Enable necessary extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pg_trgm"; -- For fast text search (ILIKE)
+-- ---------- helpers ----------
+create or replace function public.set_updated_at() returns trigger language plpgsql as $$
+begin new.updated_at = now(); return new; end $$;
 
--- ============================================================
--- 1. SUBSCRIPTION PLANS
--- ============================================================
-CREATE TABLE IF NOT EXISTS public.subscription_plans (
-    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name          TEXT NOT NULL,
-    description   TEXT,
-    price         NUMERIC(10, 2) NOT NULL DEFAULT 0,
-    currency      TEXT NOT NULL DEFAULT 'USD',
-    duration_days INTEGER NOT NULL DEFAULT 30,
-    features      JSONB DEFAULT '[]'::jsonb,
-    is_active     BOOLEAN NOT NULL DEFAULT true,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- ---------- profiles (1:1 with auth.users) ----------
+create table public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  email text,
+  full_name text not null default '',
+  username text unique check (username ~ '^[a-z0-9_]{3,30}$'),
+  avatar_url text,
+  bio text,
+  phone text,
+  city text,
+  country text,
+  role text not null default 'user' check (role in ('user','business_owner','admin')),
+  member_type text check (member_type in ('founder','business','investor','mentor','student','professional')),
+  approval_status text not null default 'approved' check (approval_status in ('pending','approved','rejected')),
+  approval_note text,
+  approved_at timestamptz,
+  approved_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index idx_profiles_directory on public.profiles(member_type, approval_status, created_at desc) where member_type is not null;
+create trigger trg_profiles_updated before update on public.profiles for each row execute function public.set_updated_at();
+
+create or replace function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, email, full_name, phone, role, member_type, approval_status)
+  values (
+    new.id,
+    new.email,
+    coalesce(new.raw_user_meta_data->>'full_name', ''),
+    new.raw_user_meta_data->>'phone',
+    case when new.raw_user_meta_data->>'member_type' = 'business' then 'business_owner' else 'user' end,
+    case when new.raw_user_meta_data->>'member_type' in ('founder','business','investor','mentor','student','professional') then new.raw_user_meta_data->>'member_type' else null end,
+    'pending'
+  );
+  return new;
+end $$;
+create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();
+create index idx_profiles_approval_created on public.profiles(approval_status, created_at desc);
+
+-- ---------- account joining fee ----------
+create table public.signup_payments (
+  id uuid primary key default gen_random_uuid(),
+  email text not null,
+  user_id uuid references auth.users(id) on delete set null,
+  razorpay_order_id text not null unique,
+  razorpay_payment_id text unique,
+  amount_minor integer not null check (amount_minor = 200),
+  status text not null default 'created' check (status in ('created','paid')),
+  created_at timestamptz not null default now(),
+  paid_at timestamptz
+);
+alter table public.signup_payments enable row level security;
+-- No client policies: only the service-role API may read or write joining-fee records.
+
+-- ---------- categories ----------
+create table public.categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  slug text not null unique,
+  icon text,
+  sort_order int not null default 0
 );
 
--- ============================================================
--- 2. USER SUBSCRIPTIONS
--- ============================================================
-CREATE TABLE IF NOT EXISTS public.user_subscriptions (
-    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id    UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    plan_id    UUID NOT NULL REFERENCES public.subscription_plans(id),
-    status     TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'expired', 'cancelled')),
-    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- ---------- plans ----------
+create table public.plans (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  name text not null,
+  description text,
+  price_minor int not null default 0,          -- smallest currency unit (paise)
+  currency text not null default 'INR',
+  interval text not null default 'month' check (interval in ('month','year')),
+  features jsonb not null default '{}',
+  is_active boolean not null default true,
+  sort_order int not null default 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id  ON public.user_subscriptions (user_id);
-CREATE INDEX IF NOT EXISTS idx_user_subscriptions_status   ON public.user_subscriptions (status);
-CREATE INDEX IF NOT EXISTS idx_user_subscriptions_expires  ON public.user_subscriptions (expires_at);
+-- ---------- businesses ----------
+create table public.businesses (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  category_id uuid references public.categories(id) on delete set null,
+  name text not null,
+  slug text not null unique,
+  description text,
+  logo_url text,
+  cover_url text,
+  email text,
+  phone text,
+  website text,
+  address text,
+  city text,
+  state text,
+  country text,
+  postal_code text,
+  latitude double precision,
+  longitude double precision,
+  hours jsonb not null default '{}',
+  social_links jsonb not null default '{}',
+  tags text[] not null default '{}',
+  status text not null default 'draft' check (status in ('draft','published','suspended')),
+  is_verified boolean not null default false,
+  is_featured boolean not null default false,
+  plan_code text not null default 'free',
+  avg_rating numeric(3,2) not null default 0,
+  review_count int not null default 0,
+  view_count int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create trigger trg_biz_updated before update on public.businesses for each row execute function public.set_updated_at();
+create index idx_biz_status_city on public.businesses(status, city);
+create index idx_biz_owner on public.businesses(owner_id);
+create index idx_biz_category on public.businesses(category_id);
+create index idx_biz_name_trgm on public.businesses using gin (name gin_trgm_ops);
 
--- ============================================================
--- 3. PROFILES  (extends auth.users 1-to-1)
--- ============================================================
-CREATE TABLE IF NOT EXISTS public.profiles (
-    id                  UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    username            TEXT UNIQUE,
-    full_name           TEXT,
-    bio                 TEXT,
-    avatar_url          TEXT,
-    phone               TEXT,
-    location            TEXT,
-    city                TEXT,
-    country             TEXT,
-    website             TEXT,
-    role                TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'business_owner', 'admin')),
-    is_profile_complete BOOLEAN NOT NULL DEFAULT false,
-    subscription_id     UUID REFERENCES public.user_subscriptions(id) ON DELETE SET NULL,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+create table public.business_services (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references public.businesses(id) on delete cascade,
+  name text not null,
+  description text,
+  price numeric(12,2),
+  currency text not null default 'INR',
+  is_active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index idx_services_business on public.business_services(business_id);
+
+-- ---------- reviews ----------
+create table public.reviews (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references public.businesses(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  rating int not null check (rating between 1 and 5),
+  comment text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (business_id, user_id)
+);
+create trigger trg_reviews_updated before update on public.reviews for each row execute function public.set_updated_at();
+
+create or replace function public.refresh_business_rating() returns trigger language plpgsql as $$
+declare bid uuid := coalesce(new.business_id, old.business_id);
+begin
+  update public.businesses set
+    avg_rating = coalesce((select round(avg(rating)::numeric, 2) from public.reviews where business_id = bid), 0),
+    review_count = (select count(*) from public.reviews where business_id = bid)
+  where id = bid;
+  return null;
+end $$;
+create trigger trg_reviews_rating after insert or update or delete on public.reviews for each row execute function public.refresh_business_rating();
+
+-- ---------- favorites & notifications ----------
+create table public.favorites (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  business_id uuid not null references public.businesses(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, business_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_profiles_username  ON public.profiles (username);
-CREATE INDEX IF NOT EXISTS idx_profiles_full_name ON public.profiles USING gin (full_name gin_trgm_ops);
-
--- ============================================================
--- 3a. BUSINESSES
--- ============================================================
-CREATE TABLE IF NOT EXISTS public.business_categories (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name TEXT NOT NULL UNIQUE,
-    slug TEXT NOT NULL UNIQUE,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    is_active BOOLEAN NOT NULL DEFAULT true
+create table public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  title text not null,
+  body text,
+  data jsonb not null default '{}',
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
 );
-INSERT INTO public.business_categories (name, slug, sort_order) VALUES
-    ('Healthcare', 'healthcare', 1),
-    ('Real Estate', 'real-estate', 2),
-    ('Technology', 'technology', 3),
-    ('Manufacturing', 'manufacturing', 4),
-    ('Agriculture', 'agriculture', 5),
-    ('Education', 'education', 6),
-    ('Finance', 'finance', 7),
-    ('Automobile', 'automobile', 8),
-    ('Professional Services', 'professional-services', 9)
-ON CONFLICT (slug) DO NOTHING;
-ALTER TABLE public.business_categories ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS business_categories_public_read ON public.business_categories;
-CREATE POLICY business_categories_public_read ON public.business_categories FOR SELECT TO anon, authenticated USING (is_active = true);
+create index idx_notif_user on public.notifications(user_id, is_read, created_at desc);
 
-CREATE TABLE IF NOT EXISTS public.businesses (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    category_id UUID REFERENCES public.business_categories(id),
-    slug TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL CHECK (char_length(name) BETWEEN 2 AND 120),
-    description TEXT,
-    logo_url TEXT,
-    cover_url TEXT,
-    email TEXT,
-    phone TEXT,
-    website TEXT,
-    address TEXT,
-    city TEXT,
-    state TEXT,
-    country TEXT,
-    postal_code TEXT,
-    latitude DOUBLE PRECISION,
-    longitude DOUBLE PRECISION,
-    hours JSONB NOT NULL DEFAULT '{}'::jsonb,
-    social_links JSONB NOT NULL DEFAULT '{}'::jsonb,
-    tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'suspended')),
-    is_verified BOOLEAN NOT NULL DEFAULT false,
-    is_featured BOOLEAN NOT NULL DEFAULT false,
-    plan_code TEXT NOT NULL DEFAULT 'free' CHECK (plan_code IN ('free', 'pro', 'premium')),
-    avg_rating NUMERIC(3,2) NOT NULL DEFAULT 0,
-    review_count INTEGER NOT NULL DEFAULT 0,
-    view_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- ---------- payments & subscriptions ----------
+create table public.payments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  business_id uuid references public.businesses(id) on delete set null,
+  plan_id uuid references public.plans(id) on delete set null,
+  razorpay_order_id text unique not null,
+  razorpay_payment_id text unique,
+  amount int not null,
+  currency text not null default 'INR',
+  status text not null default 'created' check (status in ('created','paid','failed','refunded')),
+  paid_at timestamptz,
+  created_at timestamptz not null default now()
 );
-CREATE INDEX IF NOT EXISTS idx_businesses_owner_id ON public.businesses(owner_id);
-CREATE INDEX IF NOT EXISTS idx_businesses_status_city ON public.businesses(status, city);
-ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS businesses_select_published_or_owner ON public.businesses;
-CREATE POLICY businesses_select_published_or_owner ON public.businesses FOR SELECT TO authenticated
-    USING (status = 'published' OR auth.uid() = owner_id);
-DROP POLICY IF EXISTS businesses_insert_owner ON public.businesses;
-CREATE POLICY businesses_insert_owner ON public.businesses FOR INSERT TO authenticated
-    WITH CHECK (auth.uid() = owner_id);
-DROP POLICY IF EXISTS businesses_update_owner ON public.businesses;
-CREATE POLICY businesses_update_owner ON public.businesses FOR UPDATE TO authenticated
-    USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
+create index idx_payments_user on public.payments(user_id, created_at desc);
 
--- ============================================================
--- 4. EVENTS
--- ============================================================
-CREATE TABLE IF NOT EXISTS public.events (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    title           TEXT NOT NULL,
-    description     TEXT,
-    cover_image_url TEXT,
-    location        TEXT,
-    event_date      TIMESTAMPTZ NOT NULL,
-    end_date        TIMESTAMPTZ,
-    organizer_id    UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    category        TEXT,
-    tags            TEXT[] DEFAULT ARRAY[]::TEXT[],
-    max_attendees   INTEGER,
-    is_public       BOOLEAN NOT NULL DEFAULT true,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+create table public.subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null unique references public.businesses(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  plan_id uuid not null references public.plans(id),
+  status text not null default 'active' check (status in ('active','expired','cancelled')),
+  current_period_start timestamptz not null default now(),
+  current_period_end timestamptz,
+  created_at timestamptz not null default now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_organizer_id ON public.events (organizer_id);
-CREATE INDEX IF NOT EXISTS idx_events_event_date   ON public.events (event_date);
-CREATE INDEX IF NOT EXISTS idx_events_category     ON public.events (category);
-CREATE INDEX IF NOT EXISTS idx_events_is_public    ON public.events (is_public);
-CREATE INDEX IF NOT EXISTS idx_events_title        ON public.events USING gin (title gin_trgm_ops);
-
--- ============================================================
--- 5. EVENT REGISTRATIONS
--- ============================================================
-CREATE TABLE IF NOT EXISTS public.event_registrations (
-    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    event_id      UUID NOT NULL REFERENCES public.events(id) ON DELETE CASCADE,
-    user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    status        TEXT NOT NULL DEFAULT 'registered' CHECK (status IN ('registered', 'cancelled', 'attended')),
-    registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (event_id, user_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_event_registrations_event_id ON public.event_registrations (event_id);
-CREATE INDEX IF NOT EXISTS idx_event_registrations_user_id  ON public.event_registrations (user_id);
-CREATE INDEX IF NOT EXISTS idx_event_registrations_status   ON public.event_registrations (status);
-
--- ============================================================
--- 6. POSTS  (home feed)
--- ============================================================
-CREATE TABLE IF NOT EXISTS public.posts (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    author_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    title           TEXT NOT NULL,
-    content         TEXT,
-    cover_image_url TEXT,
-    type            TEXT NOT NULL DEFAULT 'article' CHECK (type IN ('announcement', 'article', 'featured')),
-    tags            TEXT[] DEFAULT ARRAY[]::TEXT[],
-    is_published    BOOLEAN NOT NULL DEFAULT false,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_posts_author_id    ON public.posts (author_id);
-CREATE INDEX IF NOT EXISTS idx_posts_type         ON public.posts (type);
-CREATE INDEX IF NOT EXISTS idx_posts_is_published ON public.posts (is_published);
-CREATE INDEX IF NOT EXISTS idx_posts_created_at   ON public.posts (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_posts_title        ON public.posts USING gin (title gin_trgm_ops);
-
--- ============================================================
--- 7. POST LIKES
--- ============================================================
-CREATE TABLE IF NOT EXISTS public.post_likes (
-    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    post_id    UUID NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
-    user_id    UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (post_id, user_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_post_likes_post_id ON public.post_likes (post_id);
-CREATE INDEX IF NOT EXISTS idx_post_likes_user_id ON public.post_likes (user_id);
-
--- ============================================================
--- TRIGGERS
--- ============================================================
-
--- Auto-create profile row when a new user signs up
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
-AS $$
-BEGIN
-    INSERT INTO public.profiles (id, full_name, is_profile_complete)
-    VALUES (
-        NEW.id,
-        NEW.raw_user_meta_data ->> 'full_name',
-        false
-    )
-    ON CONFLICT (id) DO NOTHING;
-    RETURN NEW;
-END;
+-- ---------- functions ----------
+create or replace function public.increment_business_views(bid uuid) returns void language sql as $$
+  update public.businesses set view_count = view_count + 1 where id = bid and status = 'published';
 $$;
 
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+-- Schedule with pg_cron (daily) or call from a cron job.
+create or replace function public.expire_subscriptions() returns void language plpgsql as $$
+begin
+  update public.businesses set plan_code = 'free', is_featured = false
+  where id in (select business_id from public.subscriptions where status = 'active' and current_period_end < now());
+  update public.subscriptions set status = 'expired' where status = 'active' and current_period_end < now();
+end $$;
 
--- Auto-update updated_at timestamp for profiles
-CREATE OR REPLACE FUNCTION public.update_updated_at_column()
-RETURNS TRIGGER LANGUAGE plpgsql
-AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$;
+-- ---------- Row Level Security ----------
+-- The Node API uses the service-role key (bypasses RLS) and enforces authorization itself.
+-- These policies protect the data if the frontend ever talks to Supabase directly.
+alter table public.profiles enable row level security;
+alter table public.categories enable row level security;
+alter table public.plans enable row level security;
+alter table public.businesses enable row level security;
+alter table public.business_services enable row level security;
+alter table public.reviews enable row level security;
+alter table public.favorites enable row level security;
+alter table public.notifications enable row level security;
+alter table public.payments enable row level security;
+alter table public.subscriptions enable row level security;
 
-DROP TRIGGER IF EXISTS set_profiles_updated_at ON public.profiles;
-CREATE TRIGGER set_profiles_updated_at
-    BEFORE UPDATE ON public.profiles
-    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+create policy "own profile" on public.profiles for select using (auth.uid() = id);
+create policy "public categories" on public.categories for select using (true);
+create policy "public plans" on public.plans for select using (is_active);
+create policy "published or own businesses" on public.businesses for select using (status = 'published' or owner_id = auth.uid());
+create policy "services of visible businesses" on public.business_services for select using (
+  exists (select 1 from public.businesses b where b.id = business_id and (b.status = 'published' or b.owner_id = auth.uid())));
+create policy "public reviews" on public.reviews for select using (true);
+create policy "own favorites" on public.favorites for select using (auth.uid() = user_id);
+create policy "own notifications" on public.notifications for select using (auth.uid() = user_id);
+create policy "own payments" on public.payments for select using (auth.uid() = user_id);
+create policy "own subscriptions" on public.subscriptions for select using (auth.uid() = user_id);
+-- No insert/update/delete policies: all writes go through the API.
 
-DROP TRIGGER IF EXISTS set_events_updated_at ON public.events;
-CREATE TRIGGER set_events_updated_at
-    BEFORE UPDATE ON public.events
-    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+-- ---------- storage buckets ----------
+insert into storage.buckets (id, name, public) values ('avatars','avatars',true), ('business-media','business-media',true)
+on conflict (id) do nothing;
 
-DROP TRIGGER IF EXISTS set_posts_updated_at ON public.posts;
-CREATE TRIGGER set_posts_updated_at
-    BEFORE UPDATE ON public.posts
-    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+-- ---------- seed data ----------
+insert into public.categories (name, slug, icon, sort_order) values
+ ('Restaurants & Cafes','restaurants-cafes','utensils',1),
+ ('Retail & Shopping','retail-shopping','shopping-bag',2),
+ ('Health & Wellness','health-wellness','heart',3),
+ ('Education & Training','education-training','book',4),
+ ('Professional Services','professional-services','briefcase',5),
+ ('Home Services','home-services','home',6),
+ ('Technology & IT','technology-it','cpu',7),
+ ('Beauty & Salon','beauty-salon','scissors',8),
+ ('Automotive','automotive','car',9),
+ ('Events & Entertainment','events-entertainment','music',10)
+on conflict do nothing;
 
--- Auto-expire subscriptions
-CREATE OR REPLACE FUNCTION public.expire_subscriptions()
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER
-AS $$
-BEGIN
-    UPDATE public.user_subscriptions
-    SET status = 'expired'
-    WHERE status = 'active'
-      AND expires_at < NOW();
-END;
-$$;
+insert into public.plans (code, name, description, price_minor, interval, features, sort_order) values
+ ('free','Free','Get listed on the portal',0,'month','{"max_services":5,"featured":false,"analytics":false}',1),
+ ('pro','Pro','More services and analytics',49900,'month','{"max_services":50,"featured":false,"analytics":true}',2),
+ ('premium','Premium','Featured placement on the homepage',99900,'month','{"max_services":500,"featured":true,"analytics":true}',3)
+on conflict do nothing;
 
--- ============================================================
--- ROW LEVEL SECURITY (RLS)
--- ============================================================
-
--- Enable RLS on all tables
-ALTER TABLE public.profiles            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS city TEXT;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS country TEXT;
-ALTER TABLE public.subscription_plans  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.user_subscriptions  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.events              ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.event_registrations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.posts               ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.post_likes          ENABLE ROW LEVEL SECURITY;
-
--- ── Helper function: check active subscription ──────────────
-CREATE OR REPLACE FUNCTION public.has_active_subscription(user_uuid UUID)
-RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
-AS $$
-DECLARE
-    result BOOLEAN;
-BEGIN
-    SELECT EXISTS (
-        SELECT 1 FROM public.user_subscriptions
-        WHERE user_id = user_uuid
-          AND status = 'active'
-          AND expires_at > NOW()
-    ) INTO result;
-    RETURN result;
-END;
-$$;
-
--- ── PROFILES ────────────────────────────────────────────────
--- Any authenticated user can read any profile
-CREATE POLICY "profiles_select_authenticated"
-    ON public.profiles FOR SELECT
-    TO authenticated
-    USING (true);
-
--- Profile edits do not require a paid subscription (matches the API contract).
-DROP POLICY IF EXISTS "profiles_update_own_with_subscription" ON public.profiles;
-DROP POLICY IF EXISTS "profiles_update_own" ON public.profiles;
-CREATE POLICY "profiles_update_own"
-    ON public.profiles FOR UPDATE
-    TO authenticated
-    USING (auth.uid() = id)
-    WITH CHECK (auth.uid() = id);
-
--- Restrict user-scoped edits to profile fields; role changes stay server-admin only.
-REVOKE UPDATE ON public.profiles FROM anon, authenticated;
-GRANT UPDATE (username, full_name, bio, avatar_url, phone, location, city, country, website, is_profile_complete, updated_at)
-    ON public.profiles TO authenticated;
-
--- Users can insert their own profile (triggered on signup)
-CREATE POLICY "profiles_insert_own"
-    ON public.profiles FOR INSERT
-    TO authenticated
-    WITH CHECK (auth.uid() = id);
-
--- ── SUBSCRIPTION PLANS ──────────────────────────────────────
--- Anyone authenticated can read active plans
-CREATE POLICY "subscription_plans_select"
-    ON public.subscription_plans FOR SELECT
-    TO authenticated
-    USING (is_active = true);
-
--- ── USER SUBSCRIPTIONS ──────────────────────────────────────
--- Users can only read their own subscriptions
-CREATE POLICY "user_subscriptions_select_own"
-    ON public.user_subscriptions FOR SELECT
-    TO authenticated
-    USING (auth.uid() = user_id);
-
--- Users can insert their own subscriptions
-CREATE POLICY "user_subscriptions_insert_own"
-    ON public.user_subscriptions FOR INSERT
-    TO authenticated
-    WITH CHECK (auth.uid() = user_id);
-
--- Users can update their own subscriptions (e.g., cancel)
-CREATE POLICY "user_subscriptions_update_own"
-    ON public.user_subscriptions FOR UPDATE
-    TO authenticated
-    USING (auth.uid() = user_id);
-
--- ── EVENTS ──────────────────────────────────────────────────
--- Authenticated users can read public events
-CREATE POLICY "events_select_public_authenticated"
-    ON public.events FOR SELECT
-    TO authenticated
-    USING (is_public = true);
-
--- Authenticated users can create events
-CREATE POLICY "events_insert_authenticated"
-    ON public.events FOR INSERT
-    TO authenticated
-    WITH CHECK (auth.uid() = organizer_id);
-
--- Only the organizer can update their events
-CREATE POLICY "events_update_organizer"
-    ON public.events FOR UPDATE
-    TO authenticated
-    USING (auth.uid() = organizer_id)
-    WITH CHECK (auth.uid() = organizer_id);
-
--- Only the organizer can delete their events
-CREATE POLICY "events_delete_organizer"
-    ON public.events FOR DELETE
-    TO authenticated
-    USING (auth.uid() = organizer_id);
-
--- ── EVENT REGISTRATIONS ─────────────────────────────────────
--- Users can read their own registrations; event organizers can read all registrations for their events
-CREATE POLICY "event_registrations_select"
-    ON public.event_registrations FOR SELECT
-    TO authenticated
-    USING (
-        auth.uid() = user_id
-        OR auth.uid() IN (
-            SELECT organizer_id FROM public.events WHERE id = event_id
-        )
-    );
-
--- Users can register (insert) for events if they have an active subscription
-CREATE POLICY "event_registrations_insert_with_subscription"
-    ON public.event_registrations FOR INSERT
-    TO authenticated
-    WITH CHECK (
-        auth.uid() = user_id
-        AND public.has_active_subscription(auth.uid())
-    );
-
--- Users can update (cancel) their own registrations
-CREATE POLICY "event_registrations_update_own"
-    ON public.event_registrations FOR UPDATE
-    TO authenticated
-    USING (auth.uid() = user_id)
-    WITH CHECK (auth.uid() = user_id);
-
--- ── POSTS ───────────────────────────────────────────────────
--- Any authenticated user can read published posts
-CREATE POLICY "posts_select_published_authenticated"
-    ON public.posts FOR SELECT
-    TO authenticated
-    USING (is_published = true);
-
--- Only service role (admin) can insert/update/delete posts
--- (Use supabaseAdmin client on the server side for content management)
-
--- ── POST LIKES ──────────────────────────────────────────────
--- Users can read all likes
-CREATE POLICY "post_likes_select_authenticated"
-    ON public.post_likes FOR SELECT
-    TO authenticated
-    USING (true);
-
--- Users can like posts (insert their own likes)
-CREATE POLICY "post_likes_insert_own"
-    ON public.post_likes FOR INSERT
-    TO authenticated
-    WITH CHECK (auth.uid() = user_id);
-
--- Users can remove their own likes
-CREATE POLICY "post_likes_delete_own"
-    ON public.post_likes FOR DELETE
-    TO authenticated
-    USING (auth.uid() = user_id);
-
--- ============================================================
--- STORAGE BUCKETS
--- ============================================================
-
--- Create avatars bucket (if it doesn't exist via dashboard)
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('avatars', 'avatars', true)
-ON CONFLICT (id) DO NOTHING;
-
--- Allow authenticated users to upload to their own folder in avatars bucket
-CREATE POLICY "avatar_upload_own"
-    ON storage.objects FOR INSERT
-    TO authenticated
-    WITH CHECK (
-        bucket_id = 'avatars'
-        AND (storage.foldername(name))[1] = auth.uid()::text
-    );
-
--- Allow authenticated users to update their own avatars
-CREATE POLICY "avatar_update_own"
-    ON storage.objects FOR UPDATE
-    TO authenticated
-    USING (
-        bucket_id = 'avatars'
-        AND (storage.foldername(name))[1] = auth.uid()::text
-    );
-
--- Allow public read of all avatars
-CREATE POLICY "avatar_public_read"
-    ON storage.objects FOR SELECT
-    TO public
-    USING (bucket_id = 'avatars');
+-- To make yourself an admin after signing up:
+-- update public.profiles set role = 'admin' where id = '<your-user-uuid>';

@@ -1,23 +1,15 @@
-# Dependencies
 node_modules/
-
-# Environment variables and secrets
+dist/
+coverage/
 .env
 .env.*
 !.env.example
-
-# Logs
-logs/
-*.log
 npm-debug.log*
 yarn-debug.log*
-
-# Build and test output
-dist/
-build/
-coverage/
-
-# OS and editor files
+pnpm-debug.log*
+*.log
 .DS_Store
 Thumbs.db
+.idea/
 .vscode/
+uploads/
