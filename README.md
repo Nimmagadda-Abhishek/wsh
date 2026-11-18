@@ -43,7 +43,7 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 | | POST `/api/payments/verify` `{razorpay_order_id,razorpay_payment_id,razorpay_signature}` | ✔ |
 | | GET `/api/payments/history` · `/subscription/:businessId` | ✔ |
 | | POST `/api/payments/webhook` | Razorpay signature |
-| **Admin** | GET `/api/admin/stats` `/users` `/businesses` `/payments?status=created\|paid\|failed\|refunded` (paginated; payments include payer, plan, and business details) · PATCH `/users/:id/role` `/businesses/:id` · DELETE `/reviews/:id` | ✔ admin |
+| **Admin** | GET `/api/admin/stats` `/users` `/businesses` `/payments?status=created\|paid\|failed\|refunded` (paginated; includes business-plan and signup joining-fee payments) · PATCH `/users/:id/role` `/businesses/:id` · DELETE `/reviews/:id` | ✔ admin |
 | | PATCH `/api/admin/users/:id/approval` `{status: approved\|rejected, note?}` | ✔ admin |
 
 ## Signup payment and admin approval

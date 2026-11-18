@@ -47,7 +47,10 @@ test('admin payments list includes payer and purchase details with status filter
   const adminSource = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   assert.match(adminSource, /r\.get\('\/payments'/);
   assert.match(adminSource, /profiles!payments_user_id_fkey\(full_name, email\)/);
-  assert.match(adminSource, /query\.eq\('status'/);
+  assert.match(adminSource, /from\('signup_payments'\)/);
+  assert.match(adminSource, /payment_type: 'joining_fee'/);
+  assert.match(adminSource, /amount: payment\.amount_minor/);
+  assert.match(adminSource, /PaymentsQuery\.eq\('status'/);
 } );
 
 test('public member directories are restricted to approved role categories', async () => {
