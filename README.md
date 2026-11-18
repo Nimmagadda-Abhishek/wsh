@@ -22,8 +22,7 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 ## Endpoints
 | Area | Method & path | Auth |
 |---|---|---|
-| **Auth** | POST `/api/auth/signup/order` `{email}` → Razorpay order for the ₹2 joining fee | – |
-| | POST `/api/auth/signup` `{email,password,fullName,phone?,accountType?,memberType,razorpay_order_id,razorpay_payment_id,razorpay_signature}` → creates account only after server verifies captured payment; starts in `pending` approval | – |
+| **Auth** | POST `/api/auth/signup` `{email,password,fullName,phone?,accountType?,memberType?}` → creates account without a joining-fee payment; starts in `pending` approval | – |
 | | POST `/api/auth/login` · `/refresh` `{refreshToken}` · `/forgot-password` · `/resend-verification` | – |
 | | POST `/api/auth/logout` · `/change-password` · `/reset-password` (recovery token) · GET `/me` | ✔ |
 | **Home** | GET `/api/home` (categories, featured, topRated, latest, plans, stats) · `/api/home/categories` · `/api/home/search?q=` | – |
@@ -43,11 +42,11 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 | | POST `/api/payments/verify` `{razorpay_order_id,razorpay_payment_id,razorpay_signature}` | ✔ |
 | | GET `/api/payments/history` · `/subscription/:businessId` | ✔ |
 | | POST `/api/payments/webhook` | Razorpay signature |
-| **Admin** | GET `/api/admin/stats` `/users` `/businesses` `/payments?status=created\|paid\|failed\|refunded` (paginated; includes business-plan and signup joining-fee payments) · PATCH `/users/:id/role` `/businesses/:id` · DELETE `/reviews/:id` | ✔ admin |
+| **Admin** | GET `/api/admin/stats` `/users` `/businesses` `/payments?status=created\|paid\|failed\|refunded` (paginated business-plan payment records) · PATCH `/users/:id/role` `/businesses/:id` · DELETE `/reviews/:id` | ✔ admin |
 | | PATCH `/api/admin/users/:id/approval` `{status: approved\|rejected, note?}` | ✔ admin |
 
-## Signup payment and admin approval
-The signup page starts a ₹2 Razorpay Checkout order. After checkout, the API verifies the HMAC signature, confirms the payment belongs to the matching order and amount, captures it if needed, and only then creates the Supabase Auth user. The payment order is stored in `signup_payments` and cannot be reused. Configure Razorpay auto-capture and keep the production keys in the backend secret store. The member type is saved alongside the account; approved founders and business owners appear in the founders directory, while approved investors and mentors appear in the investors directory.
+## Signup and admin approval
+Signup is free for now. Razorpay remains enabled for business-plan payments. Existing `signup_payments` records are retained in the database, but are not included in the admin business-payment list. The member type is saved alongside each account; approved founders and business owners appear in the founders directory, while approved investors and mentors appear in the investors directory.
 
 New accounts get `profiles.approval_status = 'pending'`. Until an administrator approves them in the `/#/admin` panel, protected profile, business, and subscription API routes return `403` with an approval status. Administrators can review users, approve or reject accounts, and inspect user and business records. Existing accounts remain approved when applying the migration. To bootstrap the first admin, sign up and verify an account, then run `npm run seed:admin -- your@email.com` from this backend directory. Sign in at the WS Hub portal using that account's normal email/password or configured social sign-in; the Admin link appears in the navigation and `/#/admin` opens the console. The browser cannot grant itself admin access.
 

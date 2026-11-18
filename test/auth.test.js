@@ -32,13 +32,11 @@ test('signup fee signature is verified and malformed/tampered signatures fail', 
   assert.equal(verifyCheckoutSignature(secret, orderId, paymentId, `${signature}bad`), false);
 });
 
-test('signup requires a verified joining-fee payment and admin API exposes approval actions', async () => {
+test('signup is free for now and admin API exposes approval actions', async () => {
   const authSource = await readFile(new URL('../src/routes/auth.js', import.meta.url), 'utf8');
   const adminSource = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   assert.match(authSource, /r\.post\('\/signup'/);
-  assert.match(authSource, /r\.post\('\/signup\/order'/);
-  assert.match(authSource, /razorpay_signature/);
-  assert.match(authSource, /signup_payments/);
+  assert.doesNotMatch(authSource, /signup\/order|razorpay_signature|signup_payments/);
   assert.match(authSource, /member_type: memberType/);
   assert.match(adminSource, /r\.patch\('\/users\/:id\/approval'/);
 });
@@ -47,10 +45,8 @@ test('admin payments list includes payer and purchase details with status filter
   const adminSource = await readFile(new URL('../src/routes/admin.js', import.meta.url), 'utf8');
   assert.match(adminSource, /r\.get\('\/payments'/);
   assert.match(adminSource, /profiles!payments_user_id_fkey\(full_name, email\)/);
-  assert.match(adminSource, /from\('signup_payments'\)/);
-  assert.match(adminSource, /payment_type: 'joining_fee'/);
-  assert.match(adminSource, /amount: payment\.amount_minor/);
-  assert.match(adminSource, /PaymentsQuery\.eq\('status'/);
+  assert.doesNotMatch(adminSource, /signup_payments|joining_fee/);
+  assert.match(adminSource, /query\.eq\('status'/);
 } );
 
 test('public member directories are restricted to approved role categories', async () => {

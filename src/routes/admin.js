@@ -94,49 +94,12 @@ r.get('/payments', asyncHandler(async (req, res) => {
   const pg = getPage(req.query);
   const paymentStatuses = ['created', 'paid', 'failed', 'refunded'];
   if (req.query.status && !paymentStatuses.includes(String(req.query.status))) throw new ApiError(400, 'Invalid payment status');
-  // Fetch enough rows from each ledger to produce a correctly sorted combined page.
-  let businessPaymentsQuery = supabaseAdmin.from('payments')
+  let query = supabaseAdmin.from('payments')
     .select('*, plan:plans(code, name), business:businesses(name), payer:profiles!payments_user_id_fkey(full_name, email)', { count: 'exact' })
-    .order('created_at', { ascending: false }).range(0, pg.to);
-  let signupPaymentsQuery = supabaseAdmin.from('signup_payments')
-    .select('id, email, user_id, razorpay_order_id, razorpay_payment_id, amount_minor, status, created_at, paid_at', { count: 'exact' })
-    .not('user_id', 'is', null).not('razorpay_payment_id', 'is', null)
-    .order('created_at', { ascending: false }).range(0, pg.to);
-  if (req.query.status) {
-    businessPaymentsQuery = businessPaymentsQuery.eq('status', String(req.query.status));
-    signupPaymentsQuery = signupPaymentsQuery.eq('status', String(req.query.status));
-  }
-  const [businessPayments, signupPayments] = await Promise.all([businessPaymentsQuery, signupPaymentsQuery]);
-  if (businessPayments.error) throw businessPayments.error;
-  if (signupPayments.error) throw signupPayments.error;
-
-  const signupUserIds = [...new Set((signupPayments.data || []).map((payment) => payment.user_id).filter(Boolean))];
-  const payerProfiles = signupUserIds.length
-    ? await supabaseAdmin.from('profiles').select('id, full_name, email').in('id', signupUserIds)
-    : { data: [], error: null };
-  if (payerProfiles.error) throw payerProfiles.error;
-  const payerById = new Map((payerProfiles.data || []).map((profile) => [profile.id, profile]));
-
-  const businessRows = (businessPayments.data || []).map((payment) => ({ ...payment, payment_type: 'business_plan' }));
-  const signupRows = (signupPayments.data || []).map((payment) => ({
-    id: payment.id,
-    user_id: payment.user_id,
-    razorpay_order_id: payment.razorpay_order_id,
-    razorpay_payment_id: payment.razorpay_payment_id,
-    amount: payment.amount_minor,
-    currency: 'INR',
-    status: payment.status,
-    paid_at: payment.paid_at,
-    created_at: payment.created_at,
-    payment_type: 'joining_fee',
-    plan: { code: 'JOINING_FEE', name: 'Account joining fee' },
-    business: null,
-    payer: { ...payerById.get(payment.user_id), email: payerById.get(payment.user_id)?.email || payment.email },
-  }));
-  const data = [...businessRows, ...signupRows]
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(pg.from, pg.to + 1);
-  const total = (businessPayments.count || 0) + (signupPayments.count || 0);
+    .order('created_at', { ascending: false }).range(pg.from, pg.to);
+  if (req.query.status) query = query.eq('status', String(req.query.status));
+  const { data, count: total, error } = await query;
+  if (error) throw error;
   res.json({ data, meta: pageMeta(pg, total) });
 }));
 
