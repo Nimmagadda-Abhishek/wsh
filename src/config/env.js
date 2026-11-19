@@ -16,5 +16,6 @@ export const env = {
   passwordResetRedirectUrl: process.env.PASSWORD_RESET_REDIRECT_URL,
   rzpKeyId: req('RAZORPAY_KEY_ID'),
   rzpKeySecret: req('RAZORPAY_KEY_SECRET'),
-  rzpWebhookSecret: req('RAZORPAY_WEBHOOK_SECRET'),
+  // Optional when the Razorpay webhook is not configured; browser payment verification remains available.
+  rzpWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
 };

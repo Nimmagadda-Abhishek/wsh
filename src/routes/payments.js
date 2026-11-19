@@ -164,6 +164,7 @@ r.get('/subscription/:businessId', requireAuth, requireApproved, asyncHandler(as
 
 // ---- Webhook (mounted in app.js with express.raw BEFORE express.json) ----
 export const webhookHandler = asyncHandler(async (req, res) => {
+  if (!env.rzpWebhookSecret) throw new ApiError(503, 'Payment webhook is not configured. Set RAZORPAY_WEBHOOK_SECRET in the backend environment.');
   const raw = req.body; // Buffer
   if (!safeEqual(hmac(env.rzpWebhookSecret, raw), req.headers['x-razorpay-signature'])) throw new ApiError(400, 'Invalid signature');
   const event = JSON.parse(raw.toString('utf8'));

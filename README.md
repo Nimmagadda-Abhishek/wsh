@@ -7,7 +7,7 @@ Express API on top of Supabase (Postgres, Auth, Storage) with Razorpay payments.
 2. Supabase **Auth > URL Configuration**: add `https://ws-portel.web.app` to Site URL / Redirect URLs.
 3. `cp .env.example .env` and fill in the keys (Supabase *Project Settings > API*, Razorpay dashboard). Use Razorpay credentials for the environment you intend to run, and configure payment auto-capture.
 4. `npm install && npm run dev` → http://localhost:4000/health
-5. Razorpay dashboard → Webhooks → `https://<your-api>/api/payments/webhook`, events `payment.captured`, `payment.failed`, `order.paid`, secret = `RAZORPAY_WEBHOOK_SECRET`.
+5. Optional but recommended: Razorpay dashboard → Webhooks → `https://<your-api>/api/payments/webhook`, events `payment.captured`, `payment.failed`, `order.paid`. Copy the webhook secret into `RAZORPAY_WEBHOOK_SECRET`. Without it, the API still starts and checkout signature verification works; the webhook endpoint returns 503 until configured.
 6. Create your own account in the portal and verify its email. Then grant it admin access from the backend folder with `npm run seed:admin -- your@email.com`. This script only promotes an existing, email-verified account; it never creates credentials. Keep the service-role key private.
 7. Schedule `select public.expire_subscriptions();` daily (pg_cron or any cron).
 
