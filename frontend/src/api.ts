@@ -169,6 +169,10 @@ export const businessApi = {
     const body = new FormData(); body.append("file", file);
     return apiRequest<any>(`/api/businesses/${id}/cover`, { method: "POST", body });
   },
+  uploadPortfolioMedia: (id: string, kind: "product" | "gallery", file: File) => {
+    const body = new FormData(); body.append("file", file);
+    return apiRequest<{ url: string }>(`/api/businesses/${id}/portfolio-media?kind=${kind}`, { method: "POST", body });
+  },
   services: {
     list: (id: string) => apiRequest<any[]>(`/api/businesses/${id}/services`, { auth: false }),
     create: (id: string, body: Record<string, unknown>) => apiRequest<any>(`/api/businesses/${id}/services`, { method: "POST", body: JSON.stringify(body) }),

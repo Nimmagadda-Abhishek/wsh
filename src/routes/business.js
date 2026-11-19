@@ -9,9 +9,11 @@ import { upload, uploadImage } from '../utils/upload.js';
 const r = Router();
 const MAX_BUSINESSES_PER_USER = 5;
 
-const LIST_FIELDS = 'id, name, slug, description, logo_url, cover_url, city, state, avg_rating, review_count, is_verified, is_featured, listing_fee_paid, category:categories(id, name, slug)';
+const LIST_FIELDS = 'id, name, slug, description, logo_url, cover_url, city, state, listing_type, established_year, employee_count, map_url, products, gallery, avg_rating, review_count, is_verified, is_featured, listing_fee_paid, category:categories(id, name, slug)';
 
 const hoursSchema = z.record(z.string(), z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() }));
+const productSchema = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(1000), image: z.string().url().nullable().optional(), price: z.string().trim().max(50).optional() });
+const gallerySchema = z.object({ image: z.string().url(), label: z.string().trim().max(200), group: z.enum(['Office', 'Team', 'Events', 'Products', 'Other']) });
 const bodySchema = z.object({
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(5000),
@@ -20,6 +22,7 @@ const bodySchema = z.object({
   phone: z.string().trim().max(20).nullable(),
   website: z.string().url().nullable(),
   address: z.string().trim().max(250).nullable(),
+  mapUrl: z.string().url().nullable(),
   city: z.string().trim().max(80).nullable(),
   state: z.string().trim().max(80).nullable(),
   country: z.string().trim().max(80).nullable(),
@@ -28,6 +31,11 @@ const bodySchema = z.object({
   longitude: z.number().min(-180).max(180).nullable(),
   logoUrl: z.string().url().nullable(),
   coverUrl: z.string().url().nullable(),
+  listingType: z.enum(['business', 'startup']),
+  establishedYear: z.number().int().min(1800).max(new Date().getFullYear()).nullable(),
+  employeeCount: z.number().int().min(0).max(10000000).nullable(),
+  products: z.array(productSchema).max(100),
+  gallery: z.array(gallerySchema).max(100),
   hours: hoursSchema,
   socialLinks: z.record(z.string(), z.string().url()),
   tags: z.array(z.string().trim().max(30)).max(15),
@@ -36,16 +44,19 @@ const bodySchema = z.object({
 const toRow = (b) => clean({
   name: b.name, description: b.description, category_id: b.categoryId, email: b.email, phone: b.phone,
   website: b.website, address: b.address, city: b.city, state: b.state, country: b.country,
+  map_url: b.mapUrl, listing_type: b.listingType, established_year: b.establishedYear, employee_count: b.employeeCount,
   postal_code: b.postalCode, latitude: b.latitude, longitude: b.longitude, hours: b.hours,
-  social_links: b.socialLinks, tags: b.tags, logo_url: b.logoUrl, cover_url: b.coverUrl,
+  social_links: b.socialLinks, tags: b.tags, logo_url: b.logoUrl, cover_url: b.coverUrl, products: b.products, gallery: b.gallery,
 });
 
 // ---------------------------------------------------------------- list / search
 // GET /api/businesses?q=&category=slug&city=&minRating=&sort=rating|newest|name|popular&page=&limit=
 r.get('/', asyncHandler(async (req, res) => {
   const pg = getPage(req.query);
-  const { q, category, city, minRating, sort = 'rating' } = req.query;
+  const { q, category, city, minRating, listingType, sort = 'rating' } = req.query;
   let query = supabaseAdmin.from('businesses').select(LIST_FIELDS, { count: 'exact' }).eq('status', 'published').eq('listing_fee_paid', true);
+
+  if (listingType === 'business' || listingType === 'startup') query = query.eq('listing_type', listingType);
 
   if (q) {
     const s = String(q).replace(/[%,()*]/g, ' ').trim().slice(0, 80);
@@ -174,6 +185,14 @@ r.post('/:id/cover', requireAuth, requireApproved, upload.single('file'), asyncH
   const { data, error } = await supabaseAdmin.from('businesses').update({ cover_url: url }).eq('id', biz.id).select().single();
   if (error) throw error;
   res.json({ data });
+}));
+
+r.post('/:id/portfolio-media', requireAuth, requireApproved, upload.single('file'), asyncHandler(async (req, res) => {
+  const biz = await loadOwnedBusiness(req.params.id, req.user);
+  const kind = req.query.kind;
+  if (kind !== 'product' && kind !== 'gallery') throw new ApiError(400, 'Media kind must be product or gallery');
+  const url = await uploadImage('business-media', `${biz.id}/portfolio/${kind}`, req.file);
+  res.status(201).json({ data: { url } });
 }));
 
 // ---------------------------------------------------------------- services

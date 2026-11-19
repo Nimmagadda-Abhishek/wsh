@@ -97,6 +97,12 @@ create table public.businesses (
   description text,
   logo_url text,
   cover_url text,
+  map_url text,
+  listing_type text not null default 'business' check (listing_type in ('business','startup')),
+  established_year int check (established_year is null or established_year between 1800 and 2100),
+  employee_count int check (employee_count is null or employee_count between 0 and 10000000),
+  products jsonb not null default '[]'::jsonb,
+  gallery jsonb not null default '[]'::jsonb,
   email text,
   phone text,
   website text,
@@ -125,6 +131,7 @@ create trigger trg_biz_updated before update on public.businesses for each row e
 create index idx_biz_status_city on public.businesses(status, city);
 create index idx_biz_owner on public.businesses(owner_id);
 create index idx_biz_category on public.businesses(category_id);
+create index idx_biz_published_listing_type on public.businesses(listing_type, created_at desc) where status = 'published' and listing_fee_paid = true;
 create index idx_biz_name_trgm on public.businesses using gin (name gin_trgm_ops);
 
 create table public.business_services (

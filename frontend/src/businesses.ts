@@ -7,7 +7,7 @@ export type Membership = "Free" | "Premium" | "Enterprise";
 export interface Product {
   name: string;
   description: string;
-  image: string;
+  image?: string;
   price?: string;
 }
 export interface Service {
@@ -17,7 +17,7 @@ export interface Service {
 export interface GalleryItem {
   image: string;
   label: string;
-  group: "Office" | "Team" | "Events" | "Products";
+  group: "Office" | "Team" | "Events" | "Products" | "Other";
 }
 export interface Achievement {
   year: string;
@@ -69,6 +69,7 @@ export interface BusinessRecord {
     email: string;
     website: string;
     address: string;
+    maps?: string;
     linkedin: string;
     instagram: string;
   };

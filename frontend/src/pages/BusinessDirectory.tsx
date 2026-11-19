@@ -322,6 +322,7 @@ export default function BusinessDirectory() {
     setBusinessesLoading(true);
     setApiBusinesses(null);
     businessApi.list({
+      listingType: "business",
       q: f.q || undefined,
       category: f.category || undefined,
       city: f.location || undefined,
@@ -344,10 +345,10 @@ export default function BusinessDirectory() {
         mission: "",
         vision: "",
         founder: "",
-        employees: "",
-        established: 0,
+        employees: b.employee_count == null ? "Not listed" : String(b.employee_count),
+        established: Number(b.established_year || 0),
         hours: "",
-        businessType: "Large Enterprise",
+        businessType: b.listing_type === "startup" ? "Startup" : "SME",
         membership: "Free",
         verified: Boolean(b.is_verified),
         rating: Number(b.avg_rating ?? b.rating ?? 0),
@@ -356,9 +357,9 @@ export default function BusinessDirectory() {
         addedAt: b.created_at || "",
         verifiedAt: "",
         tags: Array.isArray(b.tags) ? b.tags : [],
-        products: [],
+        products: Array.isArray(b.products) ? b.products : [],
         services: [],
-        gallery: [],
+        gallery: Array.isArray(b.gallery) ? b.gallery : [],
         achievements: [],
         reviewList: [],
         contact: {
@@ -367,7 +368,7 @@ export default function BusinessDirectory() {
           email: b.email || "",
           website: b.website || "",
           address: b.address || b.city || "",
-          maps: "",
+          maps: b.map_url || "",
           instagram: b.social_links?.instagram,
           linkedin: b.social_links?.linkedin,
         },

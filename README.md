@@ -3,7 +3,7 @@
 Express API on top of Supabase (Postgres, Auth, Storage) with Razorpay payments.
 
 ## Setup
-1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, `supabase/business_listing_fee.sql`, and `supabase/founder_profile_social_links.sql`.
+1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, `supabase/business_listing_fee.sql`, `supabase/founder_profile_social_links.sql`, and `supabase/business_portfolio_fields.sql`.
 2. Supabase **Auth > URL Configuration**: add `https://ws-portel.web.app` to Site URL / Redirect URLs.
 3. `cp .env.example .env` and fill in the keys (Supabase *Project Settings > API*, Razorpay dashboard). Use Razorpay credentials for the environment you intend to run, and configure payment auto-capture.
 4. `npm install && npm run dev` → http://localhost:4000/health
@@ -19,6 +19,8 @@ The React frontend source is included in `frontend/`. Run `npm install` and `npm
 
 The profile editor sends the API's `fullName` field. Business edit payloads use `categoryId`, `postalCode`, `socialLinks`, `logoUrl`, and `coverUrl`; optional nullable profile values may be cleared. Password changes from the reset screen require the recovery access token from Supabase's email link.
 
+Business profile edits also accept `mapUrl` (Google Maps share URL), `listingType` (`business` or `startup`), `establishedYear`, `employeeCount`, `products` (ordered `{name, description, price?, image?}` entries), and `gallery` (ordered `{image, label, group}` entries; group is `Office`, `Team`, `Events`, `Products`, or `Other`). Service records use the existing service endpoints and plan limits. Upload portfolio media with multipart field `file`, then include the returned URL in the business update. The public profile review form requires a signed-in, approved member; owners cannot review their own business. Public profiles also offer URL sharing and a downloadable `.vcf` digital contact card.
+
 ## Endpoints
 | Area | Method & path | Auth |
 |---|---|---|
@@ -31,10 +33,11 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 | | GET `/api/profile/public/:username` | – |
 | **Directory** | GET `/api/directory/founders?page=&limit=` · `/investors?page=&limit=` (approved members and published businesses) · GET `/api/directory/members/:id` | – |
 | | GET `/api/profile/favorites` · GET `/api/profile/notifications` · PATCH `/api/profile/notifications/read` | ✔ |
-| **Business** | GET `/api/businesses?q=&category=&city=&minRating=&sort=&page=&limit=` | – |
+| **Business** | GET `/api/businesses?q=&category=&city=&minRating=&listingType=business\|startup&sort=&page=&limit=` (published listings only) | – |
 | | GET `/api/businesses/:idOrSlug` (drafts visible to owner/admin) · POST `/:id/view` | optional |
 | | POST `/api/businesses` · GET `/mine` · PATCH/DELETE `/:id` · POST `/:id/publish` `/unpublish` | ✔ owner |
 | | POST `/:id/logo` · `/:id/cover` (multipart `file`) | ✔ owner |
+| | POST `/:id/portfolio-media?kind=product\|gallery` (multipart `file`, PNG/JPG/WEBP/GIF, max 5 MB) | ✔ owner |
 | | GET `/:id/services` · POST/PATCH/DELETE `/:id/services[/:serviceId]` (plan-limited) | owner for writes |
 | | GET `/:id/reviews` · POST `/:id/reviews` `{rating,comment}` · DELETE `/:id/reviews/mine` | ✔ for writes |
 | | POST/DELETE `/:id/favorite` | ✔ |

@@ -180,7 +180,7 @@ export default function Startups() {
   const [businessesError, setBusinessesError] = useState("");
   useEffect(() => {
     let active = true;
-    businessApi.list({ page: 1, limit: 12, sort: "newest" })
+    businessApi.list({ page: 1, limit: 12, sort: "newest", listingType: "startup" })
       .then((result: any) => { if (active) setBusinesses(Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : []); })
       .catch((reason: unknown) => { if (active) setBusinessesError(reason instanceof Error ? reason.message : "Businesses could not be loaded."); })
       .finally(() => { if (active) setBusinessesLoading(false); });
