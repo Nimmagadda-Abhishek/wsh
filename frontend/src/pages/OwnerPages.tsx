@@ -1,12 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, BadgeCheck, Building2, CheckCircle2, ExternalLink, Globe2, ImagePlus, LoaderCircle, MailCheck, MapPin, Plus, Save, Store, UserRound } from "lucide-react";
 import { authApi, businessApi, getAccessToken, homeApi, paymentApi, profileApi, setSession, type Session } from "../api";
 import { Field, inputCls, textareaCls } from "../components/ui/Modal";
 import { login, useStore, type Role } from "../store";
 
-type ProfileForm = { full_name: string; username: string; bio: string; phone: string; city: string; country: string };
-const blankProfile: ProfileForm = { full_name: "", username: "", bio: "", phone: "", city: "", country: "" };
+type ProfileForm = { full_name: string; username: string; bio: string; phone: string; city: string; country: string; socialLinks: Record<string, string> };
+const profileSocialPlatforms = ["instagram", "linkedin", "portfolio", "website", "youtube", "x"];
+const blankProfile: ProfileForm = { full_name: "", username: "", bio: "", phone: "", city: "", country: "", socialLinks: {} };
 
 function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
   return <div className="mb-7"><p className="text-[11px] font-bold uppercase tracking-[.14em] text-gold-800">{eyebrow}</p><h1 className="mt-2 text-[30px] font-black tracking-tight text-navy-900 sm:text-[36px]">{title}</h1><p className="mt-2 max-w-2xl text-[13.5px] leading-relaxed text-slate-600">{description}</p></div>;
@@ -69,11 +70,12 @@ export function EditProfilePage() {
     document.title = "Edit profile — WS Hub";
     let current = true;
     profileApi.get().then((result) => {
-      const data = result?.profile ?? result ?? {};
+      const data = result?.data?.profile ?? result?.data ?? result?.profile ?? result ?? {};
       if (current) {
         setProfile({
           full_name: data.full_name || "", username: data.username || "", bio: data.bio || "",
           phone: data.phone || "", city: data.city || data.location || "", country: data.country || "",
+          socialLinks: data.social_links && typeof data.social_links === "object" ? data.social_links : data.socialLinks && typeof data.socialLinks === "object" ? data.socialLinks : {},
         });
         setAvatar(data.avatar_url || "");
       }
@@ -84,11 +86,12 @@ export function EditProfilePage() {
 
   if (!user && !getAccessToken()) return <Navigate to="/login?next=%2Fprofile%2Fedit" replace />;
 
-  const update = (key: keyof ProfileForm, value: string) => setProfile((old) => ({ ...old, [key]: value }));
+  const update = (key: Exclude<keyof ProfileForm, "socialLinks">, value: string) => setProfile((old) => ({ ...old, [key]: value }));
+  const updateProfileSocial = (key: string, value: string) => setProfile((old) => ({ ...old, socialLinks: { ...old.socialLinks, [key]: value } }));
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setMessage(""); setError(""); setSaving(true);
     try {
-      const result = await profileApi.update({ fullName: profile.full_name.trim(), username: profile.username.trim().toLowerCase(), bio: profile.bio.trim(), phone: profile.phone.trim(), city: profile.city.trim(), country: profile.country.trim() });
+      const result = await profileApi.update({ fullName: profile.full_name.trim(), username: profile.username.trim().toLowerCase(), bio: profile.bio.trim(), phone: profile.phone.trim(), city: profile.city.trim(), country: profile.country.trim(), socialLinks: Object.fromEntries(Object.entries(profile.socialLinks).map(([key, value]) => [key, value.trim()]).filter(([, value]) => value)) });
       if (result?.full_name) setProfile((old) => ({ ...old, full_name: result.full_name }));
       setMessage("Your profile was saved.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save your profile."); }
@@ -120,6 +123,7 @@ export function EditProfilePage() {
             <Field label="Phone" htmlFor="profile-phone"><input id="profile-phone" type="tel" className={inputCls} maxLength={20} value={profile.phone} onChange={(event) => update("phone", event.target.value)} autoComplete="tel" /></Field>
             <Field label="City" htmlFor="profile-city"><input id="profile-city" className={inputCls} maxLength={80} value={profile.city} onChange={(event) => update("city", event.target.value)} autoComplete="address-level2" /></Field>
             <Field label="Country" htmlFor="profile-country"><input id="profile-country" className={inputCls} maxLength={80} value={profile.country} onChange={(event) => update("country", event.target.value)} autoComplete="country-name" /></Field>
+            <div className="sm:col-span-2"><h3 className="mb-1 text-[13px] font-bold text-navy-900">Social links and portfolio</h3><p className="mb-3 text-[11.5px] text-slate-500">Add public links people can use to learn more about you.</p><div className="grid gap-4 sm:grid-cols-2">{[...new Set([...profileSocialPlatforms, ...Object.keys(profile.socialLinks)])].map((platform) => <Field key={platform} label={platform === "x" ? "X (Twitter)" : platform === "linkedin" ? "LinkedIn" : platform[0].toUpperCase() + platform.slice(1)} htmlFor={`profile-social-${platform}`}><input id={`profile-social-${platform}`} type="url" className={inputCls} value={profile.socialLinks[platform] || ""} onChange={(event) => updateProfileSocial(platform, event.target.value)} placeholder={platform === "portfolio" ? "https://yourportfolio.com" : "https://…"} /></Field>)}</div></div>
           </div>
           <div className="mt-6 flex flex-wrap gap-2"><button className="btn-gold px-5 py-2.5" type="submit" disabled={saving}><Save className="h-4 w-4" />{saving ? "Saving…" : "Save changes"}</button><Link to="/dashboard" className="inline-flex items-center rounded-md border border-slate-300 px-4 py-2.5 text-[12.5px] font-semibold text-navy-800 hover:bg-navy-50">Cancel</Link></div>
         </form>
@@ -136,6 +140,7 @@ type BusinessItem = { id: string; slug: string; name: string; city?: string; sta
 
 export function BusinessManagerPage() {
   const user = useStore((state) => state.user);
+  const navigate = useNavigate();
   const [items, setItems] = useState<BusinessItem[]>([]);
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(true);
@@ -165,18 +170,15 @@ export function BusinessManagerPage() {
   const changeStatus = async (item: BusinessItem) => {
     setBusy(item.id); setError(""); setNotice("");
     try {
-      if (item.status === "published") await businessApi.unpublish(item.id); else await businessApi.publish(item.id);
+      if (item.status === "published") await businessApi.unpublish(item.id);
+      else if (!item.listing_fee_paid) {
+        setNotice("A one-time ₹2 fee is required before publishing. Continue to secure payment.");
+        navigate(`/businesses/${item.id}/payment`, { state: { message: "Complete the ₹2 listing fee to publish this business." } });
+        return;
+      } else await businessApi.publish(item.id);
       setNotice(item.status === "published" ? "The listing is now a draft." : "Your business is published on WS Hub.");
       setRefresh((value) => value + 1);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update the listing status."); }
-    finally { setBusy(""); }
-  };
-  const payFee = async (item: BusinessItem) => {
-    setBusy(item.id); setError(""); setNotice("");
-    try {
-      const paid = await payListingFee(item.id);
-      if (paid) { setNotice("₹2 fee confirmed. Complete your details and publish when ready."); setRefresh((value) => value + 1); }
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not complete the listing fee payment."); }
     finally { setBusy(""); }
   };
 
@@ -186,7 +188,7 @@ export function BusinessManagerPage() {
     {error && <Notice error>{error}</Notice>}{notice && <Notice>{notice}</Notice>}
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
       <section className="card p-5 sm:p-6"><div className="flex items-center justify-between gap-3"><div><h2 className="text-[16px] font-bold text-navy-900">Your listings</h2><p className="mt-1 text-[12px] text-slate-500">Drafts remain private until you publish them.</p></div><span className="rounded-full bg-navy-50 px-3 py-1 text-[11px] font-bold text-navy-700">{items.length} / 5</span></div>
-        {loading ? <div className="flex items-center gap-2 py-8 text-[12.5px] text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading listings…</div> : items.length === 0 ? <div className="mt-5 rounded-lg border border-dashed border-slate-300 px-5 py-8 text-center"><Store className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-[13px] font-semibold text-navy-900">No business listings yet</p><p className="mt-1 text-[12px] text-slate-500">Create your first draft to get started.</p></div> : <ul className="mt-4 divide-y divide-line">{items.map((item) => <li key={item.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-3">{item.logo_url ? <img src={item.logo_url} alt="" className="h-11 w-11 rounded-lg object-cover" /> : <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-navy-50 text-navy-700"><Building2 className="h-5 w-5" /></span>}<div className="min-w-0"><p className="truncate text-[13.5px] font-bold text-navy-900">{item.name}</p><p className="mt-0.5 truncate text-[11px] text-slate-500">{item.city || "Location not added"} · {item.slug}</p></div></div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[10.5px] font-bold capitalize ${item.status === "published" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{item.status}</span>{!item.listing_fee_paid && <button type="button" disabled={busy === item.id} onClick={() => void payFee(item)} className="rounded-md bg-gold-500 px-3 py-1.5 text-[11.5px] font-bold text-navy-900 hover:bg-gold-400 disabled:opacity-50">{busy === item.id ? "Processing…" : "Pay ₹2 fee"}</button>}<Link to={`/businesses/${encodeURIComponent(item.id)}/edit`} className="rounded-md border border-slate-300 px-3 py-1.5 text-[11.5px] font-semibold text-navy-800 hover:bg-navy-50">Edit</Link>{item.status === "published" && <Link to={`/businesses/${encodeURIComponent(item.slug)}`} aria-label={`View ${item.name}`} className="rounded-md border border-slate-300 p-1.5 text-navy-700 hover:bg-navy-50"><ExternalLink className="h-4 w-4" /></Link>}<button type="button" disabled={busy === item.id || (!item.listing_fee_paid && item.status !== "published")} onClick={() => void changeStatus(item)} className="rounded-md bg-navy-800 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-navy-700 disabled:opacity-50">{busy === item.id ? "Saving…" : item.status === "published" ? "Unpublish" : "Publish"}</button></div></li>)}</ul>}
+        {loading ? <div className="flex items-center gap-2 py-8 text-[12.5px] text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading listings…</div> : items.length === 0 ? <div className="mt-5 rounded-lg border border-dashed border-slate-300 px-5 py-8 text-center"><Store className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-[13px] font-semibold text-navy-900">No business listings yet</p><p className="mt-1 text-[12px] text-slate-500">Create your first draft to get started.</p></div> : <ul className="mt-4 divide-y divide-line">{items.map((item) => <li key={item.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-3">{item.logo_url ? <img src={item.logo_url} alt="" className="h-11 w-11 rounded-lg object-cover" /> : <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-navy-50 text-navy-700"><Building2 className="h-5 w-5" /></span>}<div className="min-w-0"><p className="truncate text-[13.5px] font-bold text-navy-900">{item.name}</p><p className="mt-0.5 truncate text-[11px] text-slate-500">{item.city || "Location not added"} · {item.slug}</p></div></div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[10.5px] font-bold capitalize ${item.status === "published" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{item.status}</span>{!item.listing_fee_paid && item.status !== "published" && <span className="text-[10.5px] font-medium text-amber-700">₹2 fee needed to publish</span>}<Link to={`/businesses/${encodeURIComponent(item.id)}/edit`} className="rounded-md border border-slate-300 px-3 py-1.5 text-[11.5px] font-semibold text-navy-800 hover:bg-navy-50">Edit</Link>{item.status === "published" && <Link to={`/businesses/${encodeURIComponent(item.slug)}`} aria-label={`View ${item.name}`} className="rounded-md border border-slate-300 p-1.5 text-navy-700 hover:bg-navy-50"><ExternalLink className="h-4 w-4" /></Link>}<button type="button" disabled={busy === item.id} onClick={() => void changeStatus(item)} className="rounded-md bg-navy-800 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-navy-700 disabled:opacity-50">{busy === item.id ? "Saving…" : item.status === "published" ? "Unpublish" : "Publish"}</button></div></li>)}</ul>}
       </section>
       <aside className="h-fit rounded-xl border border-navy-800 bg-navy-900 p-5 text-white sm:p-6"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-gold-400"><Plus className="h-5 w-5" /></span><h2 className="mt-4 text-[16px] font-bold">Add a business</h2><p className="mt-1.5 text-[12px] leading-relaxed text-white/70">Start with a name. You can add contact, location and category details before publishing.</p><form onSubmit={create} className="mt-5 space-y-3"><label htmlFor="new-business-name" className="block text-[11.5px] font-semibold text-white/85">Business name</label><input id="new-business-name" className="h-10 w-full rounded-md border border-white/20 bg-white px-3 text-[13px] text-navy-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-gold-400" minLength={2} maxLength={120} required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Warangal Coffee House" /><button type="submit" disabled={busy === "new" || items.length >= 5} className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-gold-500 px-4 py-2.5 text-[12.5px] font-bold text-navy-900 hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-50"><Plus className="h-4 w-4" />{busy === "new" ? "Creating…" : "Create draft"}</button>{items.length >= 5 && <p className="text-[11px] text-white/65">You’ve reached the 5 business limit.</p>}</form></aside>
     </div>
@@ -203,14 +205,16 @@ const blankBusiness: BusinessForm = { name: "", description: "", categoryId: "",
 
 export function EditBusinessPage() {
   const user = useStore((state) => state.user);
+  const navigate = useNavigate();
+  const location = useLocation();
   const { id = "" } = useParams();
   const [form, setForm] = useState<BusinessForm>(blankBusiness);
   const [categories, setCategories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState((location.state as { message?: string } | null)?.message || "");
   const [error, setError] = useState("");
-  const [missing, setMissing] = useState<string[]>([]);
+  const [missing, setMissing] = useState<string[]>((location.state as { missing?: string[] } | null)?.missing || []);
   const [listingFeePaid, setListingFeePaid] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState<"logo" | "cover" | null>(null);
   useEffect(() => {
@@ -254,15 +258,16 @@ export function EditBusinessPage() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not upload this image."); }
     finally { setUploadingMedia(null); }
   };
+  const businessPayload = () => ({
+    name: form.name.trim(), description: form.description, categoryId: form.categoryId || null, email: form.email || null, phone: form.phone || null,
+    website: form.website || null, address: form.address || null, city: form.city || null, state: form.state || null, country: form.country || null,
+    postalCode: form.postalCode || null, latitude: form.latitude ? Number(form.latitude) : null, longitude: form.longitude ? Number(form.longitude) : null,
+    tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean), hours: form.hours, socialLinks: Object.fromEntries(Object.entries(form.socialLinks).filter(([, value]) => value.trim())), logoUrl: form.logoUrl || null, coverUrl: form.coverUrl || null,
+  });
   const save = async (event: FormEvent) => {
     event.preventDefault(); setSaving(true); setError(""); setMessage(""); setMissing([]);
     try {
-      await businessApi.update(id, {
-        name: form.name.trim(), description: form.description, categoryId: form.categoryId || null, email: form.email || null, phone: form.phone || null,
-        website: form.website || null, address: form.address || null, city: form.city || null, state: form.state || null, country: form.country || null,
-        postalCode: form.postalCode || null, latitude: form.latitude ? Number(form.latitude) : null, longitude: form.longitude ? Number(form.longitude) : null,
-        tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean), hours: form.hours, socialLinks: Object.fromEntries(Object.entries(form.socialLinks).filter(([, value]) => value.trim())), logoUrl: form.logoUrl || null, coverUrl: form.coverUrl || null,
-      });
+      await businessApi.update(id, businessPayload());
       setMessage("Business details saved.");
     } catch (reason) {
       const details = (reason as { details?: { missing?: string[] } })?.details;
@@ -270,15 +275,18 @@ export function EditBusinessPage() {
       setError(reason instanceof Error ? reason.message : "Could not save business details.");
     } finally { setSaving(false); }
   };
-  const payFee = async () => {
-    setSaving(true); setError(""); setMessage("");
-    try { if (await payListingFee(id)) { setListingFeePaid(true); setMessage("₹2 fee confirmed. Your business is ready to publish when the profile is complete."); } }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not complete the listing fee payment."); }
-    finally { setSaving(false); }
-  };
   const publish = async () => {
     setSaving(true); setError(""); setMessage(""); setMissing([]);
-    try { await businessApi.publish(id); setMessage("Your business is now published."); }
+    const required = [!form.description.trim() && "description", !form.categoryId && "category", !form.city.trim() && "city", !form.phone.trim() && !form.email.trim() && "phone or email"].filter(Boolean) as string[];
+    if (required.length) { setMissing(required); setError("Complete the required business details before publishing."); setSaving(false); return; }
+    try {
+      await businessApi.update(id, businessPayload());
+      if (!listingFeePaid) {
+        navigate(`/businesses/${id}/payment`, { state: { message: "Your business details are saved. Complete the ₹2 listing fee to publish." } });
+        return;
+      }
+      await businessApi.publish(id); setMessage("Your business is now published.");
+    }
     catch (reason) { const details = (reason as { details?: { missing?: string[] } })?.details; setMissing(details?.missing || []); setError(reason instanceof Error ? reason.message : "Could not publish your business."); }
     finally { setSaving(false); }
   };
@@ -292,9 +300,72 @@ export function EditBusinessPage() {
       <section className="card p-5 sm:p-7"><div className="mb-5 flex items-center gap-3 border-b border-line pb-4"><Building2 className="h-5 w-5 text-navy-700" /><div><h2 className="text-[15px] font-bold text-navy-900">Business details</h2><p className="text-[11.5px] text-slate-500">Start with a clear name, category and description.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Business name" htmlFor="business-name"><input id="business-name" className={inputCls} minLength={2} maxLength={120} required value={form.name} onChange={(event) => update("name", event.target.value)} /></Field><Field label="Category" htmlFor="business-category"><select id="business-category" className="select" required value={form.categoryId} onChange={(event) => update("categoryId", event.target.value)}><option value="">Choose a category</option>{categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></Field><div className="sm:col-span-2"><Field label="Description" htmlFor="business-description" hint={`${form.description.length}/5000`}><textarea id="business-description" className={`${textareaCls} min-h-32`} maxLength={5000} value={form.description} onChange={(event) => update("description", event.target.value)} placeholder="What does your business do? What makes it useful to customers?" /></Field></div><div className="sm:col-span-2"><Field label="Tags" htmlFor="business-tags" hint="Separate up to 15 tags with commas."><input id="business-tags" className={inputCls} value={form.tags} onChange={(event) => update("tags", event.target.value)} placeholder="e.g. consulting, manufacturing, Warangal" /></Field></div></div></section>
       <section className="card p-5 sm:p-7"><div className="mb-5 flex items-center gap-3 border-b border-line pb-4"><MapPin className="h-5 w-5 text-navy-700" /><div><h2 className="text-[15px] font-bold text-navy-900">Contact and location</h2><p className="text-[11.5px] text-slate-500">At least one contact method is needed before publishing.</p></div></div><div className="grid gap-4 sm:grid-cols-2">{textField("email", "Business email", { type: "email" })}{textField("phone", "Phone", { type: "tel", max: 20 })}{textField("website", "Website", { type: "url", placeholder: "https://example.com" })}<div className="sm:col-span-2">{textField("address", "Street address", { max: 250 })}</div>{textField("city", "City", { max: 80 })}{textField("state", "State", { max: 80 })}{textField("country", "Country", { max: 80 })}{textField("postalCode", "Postal code", { max: 15 })}{textField("latitude", "Latitude", { type: "number" })}{textField("longitude", "Longitude", { type: "number" })}</div></section>
       <section className="card p-5 sm:p-7"><div className="mb-5 flex items-center gap-3 border-b border-line pb-4"><Globe2 className="h-5 w-5 text-navy-700" /><div><h2 className="text-[15px] font-bold text-navy-900">More details</h2><p className="text-[11.5px] text-slate-500">Upload your business images, set opening times, and add social media links.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><div className="rounded-lg border border-line p-4"><p className="text-[12px] font-semibold text-navy-900">Business logo</p><p className="mt-1 text-[11px] text-slate-500">Square image recommended · PNG, JPG, WEBP or GIF · up to 5 MB</p><div className="mt-3 flex items-center gap-3">{form.logoUrl ? <img src={form.logoUrl} alt="Business logo preview" className="h-16 w-16 rounded-lg border border-line object-cover" /> : <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-navy-50 text-navy-500"><Building2 className="h-6 w-6" /></div>}<label htmlFor="business-logo-upload" className={`inline-flex cursor-pointer items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-[11.5px] font-semibold text-navy-800 hover:bg-navy-50 ${uploadingMedia ? "pointer-events-none opacity-60" : ""}`}><ImagePlus className="h-4 w-4" />{uploadingMedia === "logo" ? "Uploading…" : form.logoUrl ? "Change logo" : "Upload logo"}<input id="business-logo-upload" className="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={!!uploadingMedia} onChange={(event) => { void uploadBusinessImage("logo", event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} /></label></div></div><div className="rounded-lg border border-line p-4"><p className="text-[12px] font-semibold text-navy-900">Cover image</p><p className="mt-1 text-[11px] text-slate-500">Wide image recommended · PNG, JPG, WEBP or GIF · up to 5 MB</p>{form.coverUrl ? <img src={form.coverUrl} alt="Business cover preview" className="mt-3 aspect-[3/1] w-full rounded-lg border border-line object-cover" /> : <div className="mt-3 flex aspect-[3/1] items-center justify-center rounded-lg bg-navy-50 text-navy-500"><ImagePlus className="h-6 w-6" /></div>}<label htmlFor="business-cover-upload" className={`mt-3 inline-flex cursor-pointer items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-[11.5px] font-semibold text-navy-800 hover:bg-navy-50 ${uploadingMedia ? "pointer-events-none opacity-60" : ""}`}><ImagePlus className="h-4 w-4" />{uploadingMedia === "cover" ? "Uploading…" : form.coverUrl ? "Change cover" : "Upload cover image"}<input id="business-cover-upload" className="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={!!uploadingMedia} onChange={(event) => { void uploadBusinessImage("cover", event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} /></label></div><div className="sm:col-span-2"><p className="mb-2 text-[12px] font-semibold text-navy-900">Opening hours <span className="font-normal text-slate-500">(leave times blank if not set)</span></p><div className="space-y-2">{openingDays.map((day) => { const schedule = form.hours[day] || {}; return <div key={day} className="grid items-center gap-2 rounded-lg border border-line p-3 sm:grid-cols-[110px_1fr_1fr_auto]"><span className="text-[12px] font-medium capitalize text-slate-700">{day}</span><label className="sr-only" htmlFor={`hours-${day}-open`}>{day} opening time</label><input id={`hours-${day}-open`} type="time" className={inputCls} disabled={schedule.closed} value={schedule.open || ""} onChange={(event) => updateHours(day, "open", event.target.value)} /><label className="sr-only" htmlFor={`hours-${day}-close`}>{day} closing time</label><input id={`hours-${day}-close`} type="time" className={inputCls} disabled={schedule.closed} value={schedule.close || ""} onChange={(event) => updateHours(day, "close", event.target.value)} /><label className="flex items-center gap-2 text-[11.5px] text-slate-600"><input type="checkbox" checked={schedule.closed === true} onChange={(event) => updateHours(day, "closed", event.target.checked)} /> Closed</label></div>; })}</div></div><div className="sm:col-span-2"><p className="mb-2 text-[12px] font-semibold text-navy-900">Social media links</p><div className="grid gap-3 sm:grid-cols-2">{[...new Set([...socialPlatforms, ...Object.keys(form.socialLinks)])].map((platform) => <Field key={platform} label={platform === "x" ? "X (Twitter)" : platform[0].toUpperCase() + platform.slice(1)} htmlFor={`social-${platform}`}><input id={`social-${platform}`} type="url" className={inputCls} value={form.socialLinks[platform] || ""} onChange={(event) => updateSocialLink(platform, event.target.value)} placeholder="https://…" /></Field>)}</div></div></div></section>
-      <div className="flex flex-wrap items-center justify-between gap-3"><Link to="/businesses/manage" className="text-[12px] font-semibold text-slate-600 hover:text-navy-800">Cancel</Link><div className="flex flex-wrap gap-2"><button type="submit" disabled={saving} className="btn-gold px-5 py-2.5"><Save className="h-4 w-4" />{saving ? "Saving…" : "Save draft"}</button>{!listingFeePaid && <button type="button" disabled={saving} onClick={() => void payFee()} className="btn-gold px-5 py-2.5">{saving ? "Processing…" : "Pay ₹2 listing fee"}</button>}<button type="button" disabled={saving || !listingFeePaid} onClick={() => void publish()} className="btn-navy px-5 py-2.5"><BadgeCheck className="h-4 w-4" />Publish listing</button></div></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><Link to="/businesses/manage" className="text-[12px] font-semibold text-slate-600 hover:text-navy-800">Cancel</Link><div className="flex flex-wrap gap-2"><button type="submit" disabled={saving || !!uploadingMedia} className="btn-gold px-5 py-2.5"><Save className="h-4 w-4" />{saving ? "Saving…" : "Save draft"}</button><button type="button" disabled={saving || !!uploadingMedia} onClick={() => void publish()} className="btn-navy px-5 py-2.5"><BadgeCheck className="h-4 w-4" />Publish listing</button></div></div>
     </form>}
   </div>;
+}
+
+export function ListingPaymentPage() {
+  const user = useStore((state) => state.user);
+  const { id = "" } = useParams();
+  const location = useLocation();
+  const [paying, setPaying] = useState(false);
+  const [checkingProfile, setCheckingProfile] = useState(true);
+  const [paid, setPaid] = useState(false);
+  const [published, setPublished] = useState(false);
+  const [error, setError] = useState("");
+  const message = (location.state as { message?: string } | null)?.message;
+
+  useEffect(() => {
+    document.title = "Business listing payment — WS Hub";
+    let active = true;
+    businessApi.getMine(id).then((result) => {
+      const business = result?.data?.business ?? result?.data ?? result?.business ?? result;
+      const missing = [!business?.description?.trim() && "description", !business?.category_id && !business?.categoryId && "category", !business?.city?.trim() && "city", !business?.phone?.trim() && !business?.email?.trim() && "phone or email"].filter(Boolean) as string[];
+      if (missing.length) navigate(`/businesses/${id}/edit`, { replace: true, state: { message: "Complete these details first. Your business profile is saved as a private draft.", missing } });
+      else if (active) setCheckingProfile(false);
+    }).catch((reason) => {
+      if (active) { setError(reason instanceof Error ? reason.message : "Could not load the business profile."); setCheckingProfile(false); }
+    });
+    return () => { active = false; };
+  }, [id, navigate]);
+  if (!user && !getAccessToken()) return <Navigate to={`/login?next=${encodeURIComponent(`/businesses/${id}/payment`)}`} replace />;
+
+  const payAndPublish = async () => {
+    setPaying(true); setError("");
+    let paymentConfirmed = false;
+    try {
+      paymentConfirmed = await payListingFee(id);
+      if (!paymentConfirmed) return;
+      setPaid(true);
+      await businessApi.publish(id);
+      setPublished(true);
+    } catch (reason) {
+      if (paymentConfirmed) setPaid(true);
+      const reasonDetails = (reason as { details?: { missing?: string[] } })?.details;
+      if (paymentConfirmed && reasonDetails?.missing?.length) {
+        navigate(`/businesses/${id}/edit`, { replace: true, state: { message: "Your ₹2 payment is confirmed. Complete the remaining details, then publish your business.", missing: reasonDetails.missing } });
+        return;
+      }
+      setError(paymentConfirmed
+        ? "Your payment is confirmed, but the business could not be published. Try again from the business profile."
+        : reason instanceof Error ? reason.message : "Could not complete payment.");
+    } finally { setPaying(false); }
+  };
+
+  return <main className="page-in mx-auto max-w-xl px-4 py-12 sm:py-16">
+    <Link to={`/businesses/${id}/edit`} className="mb-5 inline-flex items-center gap-2 text-[12px] font-semibold text-navy-700 hover:underline"><ArrowLeft className="h-4 w-4" /> Back to business profile</Link>
+    <section className="card p-6 sm:p-9">
+      <span className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full ${published ? "bg-emerald-100 text-emerald-700" : "bg-gold-100 text-gold-800"}`}>{published ? <CheckCircle2 className="h-7 w-7" /> : <BadgeCheck className="h-7 w-7" />}</span>
+      <p className="mt-5 text-center text-[11px] font-bold uppercase tracking-[.14em] text-gold-800">Business listing</p>
+      <h1 className="mt-2 text-center text-[26px] font-black text-navy-900">{published ? "Your business is live" : paid ? "Payment confirmed" : "Publish your business"}</h1>
+      <p className="mx-auto mt-2 max-w-md text-center text-[13px] leading-relaxed text-slate-600">{published ? "Your listing is now visible in the WS Hub directory." : message || "A one-time ₹2 listing fee is needed before your business can be published. After payment, we’ll publish the listing automatically."}</p>
+      {error && <div role="alert" className="mt-5 rounded-lg bg-red-50 px-4 py-3 text-[12.5px] text-red-700">{error}</div>}
+      <div className="mt-6 rounded-xl border border-line bg-slate-50 p-4"><div className="flex items-center justify-between"><span className="text-[12.5px] text-slate-600">Business listing fee</span><strong className="text-[18px] font-black text-navy-900">₹2.00</strong></div><p className="mt-1 text-[10.5px] text-slate-500">One-time payment · securely processed by Razorpay</p></div>
+      {published ? <Link to="/businesses/manage" className="btn-navy mt-5 flex w-full justify-center py-3">View your business listings</Link> : paid ? <Link to={`/businesses/${id}/edit`} className="btn-navy mt-5 flex w-full justify-center py-3">Return to business profile</Link> : <button type="button" onClick={() => void payAndPublish()} disabled={paying || checkingProfile} className="btn-gold mt-5 flex w-full justify-center py-3 disabled:opacity-60">{checkingProfile ? "Checking profile…" : paying ? "Processing…" : "Pay ₹2 and publish"}</button>}
+      {!published && <p className="mt-3 text-center text-[10.5px] text-slate-500">{checkingProfile ? "Checking your saved business details…" : "Your business stays private until the payment succeeds."}</p>}
+    </section>
+  </main>;
 }
 
 function callbackParams() {

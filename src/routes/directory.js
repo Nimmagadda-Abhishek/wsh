@@ -7,7 +7,7 @@ const r = Router();
 async function listMembers(memberTypes, req, res) {
   const pg = getPage(req.query);
   const { data: members, count, error } = await supabaseAdmin.from('profiles')
-    .select('id, member_type, full_name, username, avatar_url, bio, city, country, created_at', { count: 'exact' })
+    .select('id, member_type, full_name, username, email, phone, avatar_url, bio, city, country, social_links, created_at', { count: 'exact' })
     .in('member_type', memberTypes).eq('approval_status', 'approved')
     .order('created_at', { ascending: false }).range(pg.from, pg.to);
   if (error) throw error;
@@ -40,7 +40,7 @@ r.get('/investors', asyncHandler((req, res) => listMembers(['investor', 'mentor'
 r.get('/members/:id', asyncHandler(async (req, res) => {
   if (!isUuid(req.params.id)) throw new ApiError(400, 'Invalid member id');
   const { data: profile, error } = await supabaseAdmin.from('profiles')
-    .select('id, member_type, full_name, username, avatar_url, bio, city, country, created_at')
+    .select('id, member_type, full_name, username, email, phone, avatar_url, bio, city, country, social_links, created_at')
     .eq('id', req.params.id).eq('approval_status', 'approved').maybeSingle();
   if (error) throw error;
   if (!profile) throw new ApiError(404, 'Member profile not found');

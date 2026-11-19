@@ -16,7 +16,7 @@ import StartupProfile from "./pages/StartupProfile";
 import Events from "./pages/Events";
 import EventDetails from "./pages/EventDetails";
 import { AuthPage, ComingSoon, ErrorBoundary, NotFound } from "./pages/Misc";
-import { AuthResetPasswordPage, BusinessManagerPage, EditBusinessPage, EditProfilePage, EmailVerifiedPage } from "./pages/OwnerPages";
+import { AuthResetPasswordPage, BusinessManagerPage, EditBusinessPage, EditProfilePage, EmailVerifiedPage, ListingPaymentPage } from "./pages/OwnerPages";
 import AdminPanel from "./pages/AdminPanel";
 
 const roadmap = ["requirements", "collaboration", "jobs", "profile", "map", "achievements", "reviews", "help-center", "contact-us", "privacy-policy", "terms-of-service", "plans", "compare", "for-businesses", "for-startups"];
@@ -55,6 +55,7 @@ export default function App() {
               <Route path="/profile/edit" element={<EditProfilePage />} />
               <Route path="/businesses/manage" element={<BusinessManagerPage />} />
               <Route path="/businesses/:id/edit" element={<EditBusinessPage />} />
+              <Route path="/businesses/:id/payment" element={<ListingPaymentPage />} />
               <Route path="/admin" element={<AdminPanel />} />
               <Route path="/auth/verified" element={<EmailVerifiedPage />} />
               <Route path="/auth/reset-password" element={<AuthResetPasswordPage />} />

@@ -3,7 +3,7 @@
 Express API on top of Supabase (Postgres, Auth, Storage) with Razorpay payments.
 
 ## Setup
-1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, and `supabase/business_listing_fee.sql`; this last migration keeps existing published businesses listed and requires new listings to pay before publishing.
+1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, `supabase/business_listing_fee.sql`, and `supabase/founder_profile_social_links.sql`.
 2. Supabase **Auth > URL Configuration**: add `https://ws-portel.web.app` to Site URL / Redirect URLs.
 3. `cp .env.example .env` and fill in the keys (Supabase *Project Settings > API*, Razorpay dashboard). Use Razorpay credentials for the environment you intend to run, and configure payment auto-capture.
 4. `npm install && npm run dev` → http://localhost:4000/health
@@ -15,7 +15,7 @@ Express API on top of Supabase (Postgres, Auth, Storage) with Razorpay payments.
 The frontend sends `Authorization: Bearer <access_token>` (from `/api/auth/login`, or from supabase-js directly, e.g. Google OAuth). Tokens are validated with `supabase.auth.getUser`. Responses are `{ data, meta? }` or `{ error, details? }`.
 
 ## WS Hub website owner pages
-The React frontend source is included in `frontend/`. Run `npm install` and `npm run dev` from that directory for local development; set `VITE_API_URL` to this API's origin. The site includes `/#/profile/edit`, `/#/businesses/manage`, `/#/businesses/:id/edit`, `/#/auth/verified`, and `/#/auth/reset-password`. Add the confirmation and recovery URLs from `.env` to Supabase Authentication → URL Configuration → Redirect URLs. For production, use `https://ws-portel.web.app/#/auth/verified` and `https://ws-portel.web.app/#/auth/reset-password`; for local Vite development, use the equivalent `http://localhost:5173/#/...` URLs. Hash routes require no hosting rewrites. Deploy the frontend separately to make changes live.
+The React frontend source is included in `frontend/`. Run `npm install` and `npm run dev` from that directory for local development; set `VITE_API_URL` to this API's origin. The site includes `/#/profile/edit`, `/#/businesses/manage`, `/#/businesses/:id/edit`, `/#/businesses/:id/payment`, `/#/auth/verified`, and `/#/auth/reset-password`. The founder directory and member pages use the public directory endpoints; profile contact details and social links are returned only for approved accounts. Add the confirmation and recovery URLs from `.env` to Supabase Authentication → URL Configuration → Redirect URLs. For production, use `https://ws-portel.web.app/#/auth/verified` and `https://ws-portel.web.app/#/auth/reset-password`; for local Vite development, use the equivalent `http://localhost:5173/#/...` URLs. Hash routes require no hosting rewrites. Deploy the frontend separately to make changes live.
 
 The profile editor sends the API's `fullName` field. Business edit payloads use `categoryId`, `postalCode`, `socialLinks`, `logoUrl`, and `coverUrl`; optional nullable profile values may be cleared. Password changes from the reset screen require the recovery access token from Supabase's email link.
 
@@ -27,6 +27,7 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 | | POST `/api/auth/logout` · `/change-password` · `/reset-password` (recovery token) · GET `/me` | ✔ |
 | **Home** | GET `/api/home` (categories, featured, topRated, latest, plans, stats) · `/api/home/categories` · `/api/home/search?q=` | – |
 | **Profile** | GET/PATCH/DELETE `/api/profile` · POST `/api/profile/avatar` (multipart `file`) | ✔ |
+| | PATCH `/api/profile` accepts `socialLinks` as optional URL map (e.g. `instagram`, `linkedin`, `portfolio`, `website`, `youtube`, `x`) | ✔ |
 | | GET `/api/profile/public/:username` | – |
 | **Directory** | GET `/api/directory/founders?page=&limit=` · `/investors?page=&limit=` (approved members and published businesses) · GET `/api/directory/members/:id` | – |
 | | GET `/api/profile/favorites` · GET `/api/profile/notifications` · PATCH `/api/profile/notifications/read` | ✔ |

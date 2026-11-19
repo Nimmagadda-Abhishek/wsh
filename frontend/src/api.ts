@@ -114,11 +114,11 @@ export const authApi = {
 };
 
 export type DirectoryBusiness = { id: string; name: string; slug: string; logo_url?: string; city?: string; description?: string };
-export type DirectoryMember = { id: string; member_type: string; full_name: string; username?: string; avatar_url?: string; bio?: string; city?: string; country?: string; created_at: string; businesses: DirectoryBusiness[] };
+export type DirectoryMember = { id: string; member_type: string; full_name: string; username?: string; email?: string; phone?: string; avatar_url?: string; bio?: string; city?: string; country?: string; social_links?: Record<string, string>; created_at: string; businesses: DirectoryBusiness[] };
 export const directoryApi = {
   founders: (page = 1, limit = 18) => apiRequest<{ data: DirectoryMember[]; meta: ApiMeta }>(`/api/directory/founders?page=${page}&limit=${limit}`, { auth: false }),
   investors: (page = 1, limit = 18) => apiRequest<{ data: DirectoryMember[]; meta: ApiMeta }>(`/api/directory/investors?page=${page}&limit=${limit}`, { auth: false }),
-  member: (id: string) => apiRequest<DirectoryMember>(`/api/directory/members/${encodeURIComponent(id)}`, { auth: false }),
+  member: (id: string) => apiRequest<{ data: DirectoryMember }>(`/api/directory/members/${encodeURIComponent(id)}`, { auth: false }).then((result) => result.data),
 };
 
 export const homeApi = {

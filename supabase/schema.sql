@@ -14,6 +14,7 @@ create table public.profiles (
   full_name text not null default '',
   username text unique check (username ~ '^[a-z0-9_]{3,30}$'),
   avatar_url text,
+  social_links jsonb not null default '{}'::jsonb,
   bio text,
   phone text,
   city text,

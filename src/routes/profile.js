@@ -15,6 +15,8 @@ const updateSchema = z.object({
   phone: z.string().trim().max(20),
   city: z.string().trim().max(80),
   country: z.string().trim().max(80),
+  socialLinks: z.record(z.string().trim().min(1).max(40), z.string().url().refine((value) => /^https?:\/\//i.test(value), 'Links must use HTTP or HTTPS'))
+    .refine((links) => Object.keys(links).length <= 10, 'Use up to 10 social links'),
 }).partial();
 
 // GET /api/profile  – my profile + counters
@@ -33,7 +35,7 @@ r.get('/', requireAuth, requireApproved, asyncHandler(async (req, res) => {
 // PATCH /api/profile
 r.patch('/', requireAuth, requireApproved, validate(updateSchema), asyncHandler(async (req, res) => {
   const b = req.body;
-  const patch = clean({ full_name: b.fullName, username: b.username, bio: b.bio, phone: b.phone, city: b.city, country: b.country });
+  const patch = clean({ full_name: b.fullName, username: b.username, bio: b.bio, phone: b.phone, city: b.city, country: b.country, social_links: b.socialLinks });
   if (!Object.keys(patch).length) throw new ApiError(400, 'Nothing to update');
   const { data, error } = await supabaseAdmin.from('profiles').update(patch).eq('id', req.user.id).select().single();
   if (error) throw error;
@@ -58,8 +60,8 @@ r.delete('/', requireAuth, requireApproved, asyncHandler(async (req, res) => {
 // GET /api/profile/public/:username
 r.get('/public/:username', asyncHandler(async (req, res) => {
   const { data: p } = await supabaseAdmin.from('profiles')
-    .select('id, full_name, username, avatar_url, bio, city, country, created_at')
-    .eq('username', req.params.username.toLowerCase()).maybeSingle();
+    .select('id, email, full_name, username, avatar_url, bio, phone, city, country, social_links, created_at')
+    .eq('username', req.params.username.toLowerCase()).eq('approval_status', 'approved').maybeSingle();
   if (!p) throw new ApiError(404, 'Profile not found');
   const { data: businesses } = await supabaseAdmin.from('businesses')
     .select('id, name, slug, logo_url, city, avg_rating, review_count').eq('owner_id', p.id).eq('status', 'published').eq('listing_fee_paid', true);
