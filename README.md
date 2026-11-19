@@ -3,7 +3,7 @@
 Express API on top of Supabase (Postgres, Auth, Storage) with Razorpay payments.
 
 ## Setup
-1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql` and `supabase/member_directories.sql`; these preserve existing account approval and add public member categories.
+1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, and `supabase/business_listing_fee.sql`; this last migration keeps existing published businesses listed and requires new listings to pay before publishing.
 2. Supabase **Auth > URL Configuration**: add `https://ws-portel.web.app` to Site URL / Redirect URLs.
 3. `cp .env.example .env` and fill in the keys (Supabase *Project Settings > API*, Razorpay dashboard). Use Razorpay credentials for the environment you intend to run, and configure payment auto-capture.
 4. `npm install && npm run dev` → http://localhost:4000/health
@@ -39,6 +39,7 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 | | POST/DELETE `/:id/favorite` | ✔ |
 | **Payments** | GET `/api/payments/plans` | – |
 | | POST `/api/payments/checkout` `{planCode,businessId}` → Razorpay order | ✔ owner |
+| | POST `/api/payments/listing-fee/checkout` `{businessId}` → Razorpay order for ₹2 | ✔ owner |
 | | POST `/api/payments/verify` `{razorpay_order_id,razorpay_payment_id,razorpay_signature}` | ✔ |
 | | GET `/api/payments/history` · `/subscription/:businessId` | ✔ |
 | | POST `/api/payments/webhook` | Razorpay signature |

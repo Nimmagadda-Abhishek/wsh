@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, BadgeCheck, Building2, CheckCircle2, ExternalLink, Globe2, LoaderCircle, MailCheck, MapPin, Plus, Save, Store, UserRound } from "lucide-react";
-import { authApi, businessApi, getAccessToken, homeApi, profileApi, setSession, type Session } from "../api";
+import { authApi, businessApi, getAccessToken, homeApi, paymentApi, profileApi, setSession, type Session } from "../api";
 import { Field, inputCls, textareaCls } from "../components/ui/Modal";
 import { login, useStore, type Role } from "../store";
 
@@ -14,6 +14,45 @@ function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: 
 
 function Notice({ children, error = false }: { children: string; error?: boolean }) {
   return <div role={error ? "alert" : "status"} className={`mb-4 rounded-lg px-4 py-3 text-[12.5px] ${error ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-800"}`}>{children}</div>;
+}
+
+type ListingCheckoutOptions = {
+  key: string; amount: number; currency: string; name: string; description: string; order_id: string;
+  prefill?: { email?: string };
+  handler: (result: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => void;
+  modal: { ondismiss: () => void };
+};
+declare global { interface Window { Razorpay?: new (options: ListingCheckoutOptions) => { open: () => void } } }
+
+async function payListingFee(businessId: string) {
+  const checkoutResult = await paymentApi.listingFeeCheckout(businessId);
+  const checkout = checkoutResult?.data ?? checkoutResult;
+  if (checkout?.paid) return true;
+  if (!window.Razorpay) {
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Could not load Razorpay Checkout. Please try again."));
+      document.body.appendChild(script);
+    });
+  }
+  if (!window.Razorpay) throw new Error("Razorpay Checkout is unavailable.");
+  return new Promise<boolean>((resolve, reject) => {
+    const checkoutWindow = new window.Razorpay!({
+      key: checkout.keyId, amount: checkout.amount, currency: checkout.currency,
+      name: checkout.name, description: checkout.description, order_id: checkout.orderId,
+      prefill: checkout.prefill,
+      handler: async (payment) => {
+        try {
+          await paymentApi.verify(payment.razorpay_order_id, payment.razorpay_payment_id, payment.razorpay_signature);
+          resolve(true);
+        } catch (error) { reject(error); }
+      },
+      modal: { ondismiss: () => resolve(false) },
+    });
+    checkoutWindow.open();
+  });
 }
 
 export function EditProfilePage() {
@@ -93,7 +132,7 @@ export function EditProfilePage() {
   </div>;
 }
 
-type BusinessItem = { id: string; slug: string; name: string; city?: string; status: string; description?: string; logo_url?: string };
+type BusinessItem = { id: string; slug: string; name: string; city?: string; status: string; description?: string; logo_url?: string; listing_fee_paid?: boolean };
 
 export function BusinessManagerPage() {
   const user = useStore((state) => state.user);
@@ -107,7 +146,7 @@ export function BusinessManagerPage() {
   useEffect(() => { document.title = "Your businesses — WS Hub"; }, []);
   useEffect(() => {
     let current = true;
-    businessApi.mine().then((result) => current && setItems(Array.isArray(result) ? result : []))
+    businessApi.mine().then((result) => current && setItems(Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : []))
       .catch((reason) => current && setError(reason instanceof Error ? reason.message : "Could not load your businesses."))
       .finally(() => current && setLoading(false));
     return () => { current = false; };
@@ -118,7 +157,7 @@ export function BusinessManagerPage() {
     event.preventDefault(); setError(""); setNotice(""); setBusy("new");
     try {
       const result = await businessApi.create({ name: name.trim() });
-      const business = result?.business ?? result;
+      const business = result?.data?.business ?? result?.data ?? result?.business ?? result;
       window.location.hash = `#/businesses/${encodeURIComponent(business.id)}/edit`;
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create the business draft."); }
     finally { setBusy(""); }
@@ -132,6 +171,14 @@ export function BusinessManagerPage() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update the listing status."); }
     finally { setBusy(""); }
   };
+  const payFee = async (item: BusinessItem) => {
+    setBusy(item.id); setError(""); setNotice("");
+    try {
+      const paid = await payListingFee(item.id);
+      if (paid) { setNotice("₹2 fee confirmed. Complete your details and publish when ready."); setRefresh((value) => value + 1); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not complete the listing fee payment."); }
+    finally { setBusy(""); }
+  };
 
   return <div className="page-in mx-auto max-w-[1080px] px-4 pb-24 pt-9 sm:px-6 lg:px-8 lg:pb-14">
     <Link to="/dashboard" className="mb-6 inline-flex items-center gap-2 text-[12px] font-semibold text-navy-700 hover:text-navy-900"><ArrowLeft className="h-4 w-4" /> Back to dashboard</Link>
@@ -139,7 +186,7 @@ export function BusinessManagerPage() {
     {error && <Notice error>{error}</Notice>}{notice && <Notice>{notice}</Notice>}
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
       <section className="card p-5 sm:p-6"><div className="flex items-center justify-between gap-3"><div><h2 className="text-[16px] font-bold text-navy-900">Your listings</h2><p className="mt-1 text-[12px] text-slate-500">Drafts remain private until you publish them.</p></div><span className="rounded-full bg-navy-50 px-3 py-1 text-[11px] font-bold text-navy-700">{items.length} / 5</span></div>
-        {loading ? <div className="flex items-center gap-2 py-8 text-[12.5px] text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading listings…</div> : items.length === 0 ? <div className="mt-5 rounded-lg border border-dashed border-slate-300 px-5 py-8 text-center"><Store className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-[13px] font-semibold text-navy-900">No business listings yet</p><p className="mt-1 text-[12px] text-slate-500">Create your first draft to get started.</p></div> : <ul className="mt-4 divide-y divide-line">{items.map((item) => <li key={item.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-3">{item.logo_url ? <img src={item.logo_url} alt="" className="h-11 w-11 rounded-lg object-cover" /> : <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-navy-50 text-navy-700"><Building2 className="h-5 w-5" /></span>}<div className="min-w-0"><p className="truncate text-[13.5px] font-bold text-navy-900">{item.name}</p><p className="mt-0.5 truncate text-[11px] text-slate-500">{item.city || "Location not added"} · {item.slug}</p></div></div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[10.5px] font-bold capitalize ${item.status === "published" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{item.status}</span><Link to={`/businesses/${encodeURIComponent(item.id)}/edit`} className="rounded-md border border-slate-300 px-3 py-1.5 text-[11.5px] font-semibold text-navy-800 hover:bg-navy-50">Edit</Link>{item.status === "published" && <Link to={`/businesses/${encodeURIComponent(item.slug)}`} aria-label={`View ${item.name}`} className="rounded-md border border-slate-300 p-1.5 text-navy-700 hover:bg-navy-50"><ExternalLink className="h-4 w-4" /></Link>}<button type="button" disabled={busy === item.id} onClick={() => void changeStatus(item)} className="rounded-md bg-navy-800 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-navy-700 disabled:opacity-50">{busy === item.id ? "Saving…" : item.status === "published" ? "Unpublish" : "Publish"}</button></div></li>)}</ul>}
+        {loading ? <div className="flex items-center gap-2 py-8 text-[12.5px] text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading listings…</div> : items.length === 0 ? <div className="mt-5 rounded-lg border border-dashed border-slate-300 px-5 py-8 text-center"><Store className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-[13px] font-semibold text-navy-900">No business listings yet</p><p className="mt-1 text-[12px] text-slate-500">Create your first draft to get started.</p></div> : <ul className="mt-4 divide-y divide-line">{items.map((item) => <li key={item.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-3">{item.logo_url ? <img src={item.logo_url} alt="" className="h-11 w-11 rounded-lg object-cover" /> : <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-navy-50 text-navy-700"><Building2 className="h-5 w-5" /></span>}<div className="min-w-0"><p className="truncate text-[13.5px] font-bold text-navy-900">{item.name}</p><p className="mt-0.5 truncate text-[11px] text-slate-500">{item.city || "Location not added"} · {item.slug}</p></div></div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[10.5px] font-bold capitalize ${item.status === "published" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{item.status}</span>{!item.listing_fee_paid && <button type="button" disabled={busy === item.id} onClick={() => void payFee(item)} className="rounded-md bg-gold-500 px-3 py-1.5 text-[11.5px] font-bold text-navy-900 hover:bg-gold-400 disabled:opacity-50">{busy === item.id ? "Processing…" : "Pay ₹2 fee"}</button>}<Link to={`/businesses/${encodeURIComponent(item.id)}/edit`} className="rounded-md border border-slate-300 px-3 py-1.5 text-[11.5px] font-semibold text-navy-800 hover:bg-navy-50">Edit</Link>{item.status === "published" && <Link to={`/businesses/${encodeURIComponent(item.slug)}`} aria-label={`View ${item.name}`} className="rounded-md border border-slate-300 p-1.5 text-navy-700 hover:bg-navy-50"><ExternalLink className="h-4 w-4" /></Link>}<button type="button" disabled={busy === item.id || (!item.listing_fee_paid && item.status !== "published")} onClick={() => void changeStatus(item)} className="rounded-md bg-navy-800 px-3 py-1.5 text-[11.5px] font-semibold text-white hover:bg-navy-700 disabled:opacity-50">{busy === item.id ? "Saving…" : item.status === "published" ? "Unpublish" : "Publish"}</button></div></li>)}</ul>}
       </section>
       <aside className="h-fit rounded-xl border border-navy-800 bg-navy-900 p-5 text-white sm:p-6"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-gold-400"><Plus className="h-5 w-5" /></span><h2 className="mt-4 text-[16px] font-bold">Add a business</h2><p className="mt-1.5 text-[12px] leading-relaxed text-white/70">Start with a name. You can add contact, location and category details before publishing.</p><form onSubmit={create} className="mt-5 space-y-3"><label htmlFor="new-business-name" className="block text-[11.5px] font-semibold text-white/85">Business name</label><input id="new-business-name" className="h-10 w-full rounded-md border border-white/20 bg-white px-3 text-[13px] text-navy-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-gold-400" minLength={2} maxLength={120} required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Warangal Coffee House" /><button type="submit" disabled={busy === "new" || items.length >= 5} className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-gold-500 px-4 py-2.5 text-[12.5px] font-bold text-navy-900 hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-50"><Plus className="h-4 w-4" />{busy === "new" ? "Creating…" : "Create draft"}</button>{items.length >= 5 && <p className="text-[11px] text-white/65">You’ve reached the 5 business limit.</p>}</form></aside>
     </div>
@@ -147,8 +194,12 @@ export function BusinessManagerPage() {
   </div>;
 }
 
-type BusinessForm = { name: string; description: string; categoryId: string; email: string; phone: string; website: string; address: string; city: string; state: string; country: string; postalCode: string; latitude: string; longitude: string; tags: string; hours: string; socialLinks: string; logoUrl: string; coverUrl: string };
-const blankBusiness: BusinessForm = { name: "", description: "", categoryId: "", email: "", phone: "", website: "", address: "", city: "", state: "", country: "", postalCode: "", latitude: "", longitude: "", tags: "", hours: "{}", socialLinks: "{}", logoUrl: "", coverUrl: "" };
+type OpeningHours = Record<string, { open?: string; close?: string; closed?: boolean }>;
+type BusinessForm = { name: string; description: string; categoryId: string; email: string; phone: string; website: string; address: string; city: string; state: string; country: string; postalCode: string; latitude: string; longitude: string; tags: string; hours: OpeningHours; socialLinks: Record<string, string>; logoUrl: string; coverUrl: string };
+type BusinessTextKey = Exclude<keyof BusinessForm, "hours" | "socialLinks">;
+const openingDays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const socialPlatforms = ["instagram", "facebook", "linkedin", "youtube", "x", "twitter", "tiktok"];
+const blankBusiness: BusinessForm = { name: "", description: "", categoryId: "", email: "", phone: "", website: "", address: "", city: "", state: "", country: "", postalCode: "", latitude: "", longitude: "", tags: "", hours: {}, socialLinks: {}, logoUrl: "", coverUrl: "" };
 
 export function EditBusinessPage() {
   const user = useStore((state) => state.user);
@@ -160,38 +211,40 @@ export function EditBusinessPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [missing, setMissing] = useState<string[]>([]);
+  const [listingFeePaid, setListingFeePaid] = useState(false);
   useEffect(() => {
     document.title = "Edit business — WS Hub";
     let current = true;
     Promise.all([businessApi.getMine(id), homeApi.categories()]).then(([businessResult, categoryResult]) => {
       if (!current) return;
-      const business = businessResult?.business ?? businessResult ?? {};
-      setCategories(Array.isArray(categoryResult) ? categoryResult : []);
+      const business = businessResult?.data?.business ?? businessResult?.data ?? businessResult?.business ?? businessResult ?? {};
+      setCategories(Array.isArray(categoryResult?.data) ? categoryResult.data : Array.isArray(categoryResult) ? categoryResult : []);
       setForm({
         ...blankBusiness, name: business.name || "", description: business.description || "", categoryId: business.category_id || business.categoryId || "",
         email: business.email || "", phone: business.phone || "", website: business.website || "", address: business.address || "",
         city: business.city || "", state: business.state || "", country: business.country || "", postalCode: business.postal_code || business.postalCode || "",
         latitude: business.latitude == null ? "" : String(business.latitude), longitude: business.longitude == null ? "" : String(business.longitude),
-        tags: Array.isArray(business.tags) ? business.tags.join(", ") : "", hours: JSON.stringify(business.hours || {}, null, 2),
-        socialLinks: JSON.stringify(business.social_links || business.socialLinks || {}, null, 2), logoUrl: business.logo_url || business.logoUrl || "", coverUrl: business.cover_url || business.coverUrl || "",
+        tags: Array.isArray(business.tags) ? business.tags.join(", ") : "", hours: business.hours && typeof business.hours === "object" ? business.hours : {},
+        socialLinks: business.social_links && typeof business.social_links === "object" ? business.social_links : business.socialLinks && typeof business.socialLinks === "object" ? business.socialLinks : {}, logoUrl: business.logo_url || business.logoUrl || "", coverUrl: business.cover_url || business.coverUrl || "",
       });
+      setListingFeePaid(business.listing_fee_paid === true);
     }).catch((reason) => current && setError(reason instanceof Error ? reason.message : "Could not load this business."))
       .finally(() => current && setLoading(false));
     return () => { current = false; };
   }, [id]);
   if (!user && !getAccessToken()) return <Navigate to={`/login?next=${encodeURIComponent(`/businesses/${id}/edit`)}`} replace />;
 
-  const update = (key: keyof BusinessForm, value: string) => setForm((old) => ({ ...old, [key]: value }));
+  const update = (key: BusinessTextKey, value: string) => setForm((old) => ({ ...old, [key]: value }));
+  const updateHours = (day: string, key: "open" | "close" | "closed", value: string | boolean) => setForm((old) => ({ ...old, hours: { ...old.hours, [day]: { ...old.hours[day], [key]: value } } }));
+  const updateSocialLink = (platform: string, value: string) => setForm((old) => ({ ...old, socialLinks: { ...old.socialLinks, [platform]: value } }));
   const save = async (event: FormEvent) => {
     event.preventDefault(); setSaving(true); setError(""); setMessage(""); setMissing([]);
     try {
-      const hours = JSON.parse(form.hours || "{}");
-      const socialLinks = JSON.parse(form.socialLinks || "{}");
       await businessApi.update(id, {
         name: form.name.trim(), description: form.description, categoryId: form.categoryId || null, email: form.email || null, phone: form.phone || null,
         website: form.website || null, address: form.address || null, city: form.city || null, state: form.state || null, country: form.country || null,
         postalCode: form.postalCode || null, latitude: form.latitude ? Number(form.latitude) : null, longitude: form.longitude ? Number(form.longitude) : null,
-        tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean), hours, socialLinks, logoUrl: form.logoUrl || null, coverUrl: form.coverUrl || null,
+        tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean), hours: form.hours, socialLinks: Object.fromEntries(Object.entries(form.socialLinks).filter(([, value]) => value.trim())), logoUrl: form.logoUrl || null, coverUrl: form.coverUrl || null,
       });
       setMessage("Business details saved.");
     } catch (reason) {
@@ -200,13 +253,19 @@ export function EditBusinessPage() {
       setError(reason instanceof Error ? reason.message : "Could not save business details.");
     } finally { setSaving(false); }
   };
+  const payFee = async () => {
+    setSaving(true); setError(""); setMessage("");
+    try { if (await payListingFee(id)) { setListingFeePaid(true); setMessage("₹2 fee confirmed. Your business is ready to publish when the profile is complete."); } }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not complete the listing fee payment."); }
+    finally { setSaving(false); }
+  };
   const publish = async () => {
     setSaving(true); setError(""); setMessage(""); setMissing([]);
     try { await businessApi.publish(id); setMessage("Your business is now published."); }
     catch (reason) { const details = (reason as { details?: { missing?: string[] } })?.details; setMissing(details?.missing || []); setError(reason instanceof Error ? reason.message : "Could not publish your business."); }
     finally { setSaving(false); }
   };
-  const textField = (key: keyof BusinessForm, label: string, options: { type?: string; max?: number; placeholder?: string } = {}) => <Field label={label} htmlFor={`business-${key}`}><input id={`business-${key}`} className={inputCls} type={options.type || "text"} maxLength={options.max} placeholder={options.placeholder} value={form[key]} onChange={(event) => update(key, event.target.value)} /></Field>;
+  const textField = (key: BusinessTextKey, label: string, options: { type?: string; max?: number; placeholder?: string } = {}) => <Field label={label} htmlFor={`business-${key}`}><input id={`business-${key}`} className={inputCls} type={options.type || "text"} maxLength={options.max} placeholder={options.placeholder} value={form[key]} onChange={(event) => update(key, event.target.value)} /></Field>;
 
   return <div className="page-in mx-auto max-w-[1040px] px-4 pb-24 pt-9 sm:px-6 lg:px-8 lg:pb-14">
     <Link to="/businesses/manage" className="mb-6 inline-flex items-center gap-2 text-[12px] font-semibold text-navy-700 hover:text-navy-900"><ArrowLeft className="h-4 w-4" /> Your businesses</Link>
@@ -215,8 +274,8 @@ export function EditBusinessPage() {
     {loading ? <div className="card flex items-center gap-3 p-6 text-[13px] text-slate-600"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading business profile…</div> : <form onSubmit={save} className="space-y-5">
       <section className="card p-5 sm:p-7"><div className="mb-5 flex items-center gap-3 border-b border-line pb-4"><Building2 className="h-5 w-5 text-navy-700" /><div><h2 className="text-[15px] font-bold text-navy-900">Business details</h2><p className="text-[11.5px] text-slate-500">Start with a clear name, category and description.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Business name" htmlFor="business-name"><input id="business-name" className={inputCls} minLength={2} maxLength={120} required value={form.name} onChange={(event) => update("name", event.target.value)} /></Field><Field label="Category" htmlFor="business-category"><select id="business-category" className="select" required value={form.categoryId} onChange={(event) => update("categoryId", event.target.value)}><option value="">Choose a category</option>{categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></Field><div className="sm:col-span-2"><Field label="Description" htmlFor="business-description" hint={`${form.description.length}/5000`}><textarea id="business-description" className={`${textareaCls} min-h-32`} maxLength={5000} value={form.description} onChange={(event) => update("description", event.target.value)} placeholder="What does your business do? What makes it useful to customers?" /></Field></div><div className="sm:col-span-2"><Field label="Tags" htmlFor="business-tags" hint="Separate up to 15 tags with commas."><input id="business-tags" className={inputCls} value={form.tags} onChange={(event) => update("tags", event.target.value)} placeholder="e.g. consulting, manufacturing, Warangal" /></Field></div></div></section>
       <section className="card p-5 sm:p-7"><div className="mb-5 flex items-center gap-3 border-b border-line pb-4"><MapPin className="h-5 w-5 text-navy-700" /><div><h2 className="text-[15px] font-bold text-navy-900">Contact and location</h2><p className="text-[11.5px] text-slate-500">At least one contact method is needed before publishing.</p></div></div><div className="grid gap-4 sm:grid-cols-2">{textField("email", "Business email", { type: "email" })}{textField("phone", "Phone", { type: "tel", max: 20 })}{textField("website", "Website", { type: "url", placeholder: "https://example.com" })}<div className="sm:col-span-2">{textField("address", "Street address", { max: 250 })}</div>{textField("city", "City", { max: 80 })}{textField("state", "State", { max: 80 })}{textField("country", "Country", { max: 80 })}{textField("postalCode", "Postal code", { max: 15 })}{textField("latitude", "Latitude", { type: "number" })}{textField("longitude", "Longitude", { type: "number" })}</div></section>
-      <section className="card p-5 sm:p-7"><div className="mb-5 flex items-center gap-3 border-b border-line pb-4"><Globe2 className="h-5 w-5 text-navy-700" /><div><h2 className="text-[15px] font-bold text-navy-900">More details</h2><p className="text-[11.5px] text-slate-500">Optional listing links and opening hours in JSON format.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Logo image URL" htmlFor="business-logo"><input id="business-logo" type="url" className={inputCls} value={form.logoUrl} onChange={(event) => update("logoUrl", event.target.value)} placeholder="https://…" /></Field><Field label="Cover image URL" htmlFor="business-cover"><input id="business-cover" type="url" className={inputCls} value={form.coverUrl} onChange={(event) => update("coverUrl", event.target.value)} placeholder="https://…" /></Field><Field label="Opening hours JSON" htmlFor="business-hours"><textarea id="business-hours" className={`${textareaCls} min-h-28 font-mono text-[11px]`} value={form.hours} onChange={(event) => update("hours", event.target.value)} /></Field><Field label="Social links JSON" htmlFor="business-social"><textarea id="business-social" className={`${textareaCls} min-h-28 font-mono text-[11px]`} value={form.socialLinks} onChange={(event) => update("socialLinks", event.target.value)} placeholder={'{"instagram":"https://…"}'} /></Field></div></section>
-      <div className="flex flex-wrap items-center justify-between gap-3"><Link to="/businesses/manage" className="text-[12px] font-semibold text-slate-600 hover:text-navy-800">Cancel</Link><div className="flex flex-wrap gap-2"><button type="submit" disabled={saving} className="btn-gold px-5 py-2.5"><Save className="h-4 w-4" />{saving ? "Saving…" : "Save draft"}</button><button type="button" disabled={saving} onClick={() => void publish()} className="btn-navy px-5 py-2.5"><BadgeCheck className="h-4 w-4" />Publish listing</button></div></div>
+      <section className="card p-5 sm:p-7"><div className="mb-5 flex items-center gap-3 border-b border-line pb-4"><Globe2 className="h-5 w-5 text-navy-700" /><div><h2 className="text-[15px] font-bold text-navy-900">More details</h2><p className="text-[11.5px] text-slate-500">Add your opening times and social media profile links.</p></div></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Logo image URL" htmlFor="business-logo"><input id="business-logo" type="url" className={inputCls} value={form.logoUrl} onChange={(event) => update("logoUrl", event.target.value)} placeholder="https://…" /></Field><Field label="Cover image URL" htmlFor="business-cover"><input id="business-cover" type="url" className={inputCls} value={form.coverUrl} onChange={(event) => update("coverUrl", event.target.value)} placeholder="https://…" /></Field><div className="sm:col-span-2"><p className="mb-2 text-[12px] font-semibold text-navy-900">Opening hours</p><div className="space-y-2">{openingDays.map((day) => { const schedule = form.hours[day] || {}; return <div key={day} className="grid items-center gap-2 rounded-lg border border-line p-3 sm:grid-cols-[110px_1fr_1fr_auto]"><span className="text-[12px] font-medium capitalize text-slate-700">{day}</span><label className="sr-only" htmlFor={`hours-${day}-open`}>{day} opening time</label><input id={`hours-${day}-open`} type="time" className={inputCls} disabled={schedule.closed} value={schedule.open || ""} onChange={(event) => updateHours(day, "open", event.target.value)} /><label className="sr-only" htmlFor={`hours-${day}-close`}>{day} closing time</label><input id={`hours-${day}-close`} type="time" className={inputCls} disabled={schedule.closed} value={schedule.close || ""} onChange={(event) => updateHours(day, "close", event.target.value)} /><label className="flex items-center gap-2 text-[11.5px] text-slate-600"><input type="checkbox" checked={schedule.closed === true} onChange={(event) => updateHours(day, "closed", event.target.checked)} /> Closed</label></div>; })}</div></div><div className="sm:col-span-2"><p className="mb-2 text-[12px] font-semibold text-navy-900">Social media links</p><div className="grid gap-3 sm:grid-cols-2">{[...new Set([...socialPlatforms, ...Object.keys(form.socialLinks)])].map((platform) => <Field key={platform} label={platform === "x" ? "X (Twitter)" : platform[0].toUpperCase() + platform.slice(1)} htmlFor={`social-${platform}`}><input id={`social-${platform}`} type="url" className={inputCls} value={form.socialLinks[platform] || ""} onChange={(event) => updateSocialLink(platform, event.target.value)} placeholder="https://…" /></Field>)}</div></div></div></section>
+      <div className="flex flex-wrap items-center justify-between gap-3"><Link to="/businesses/manage" className="text-[12px] font-semibold text-slate-600 hover:text-navy-800">Cancel</Link><div className="flex flex-wrap gap-2"><button type="submit" disabled={saving} className="btn-gold px-5 py-2.5"><Save className="h-4 w-4" />{saving ? "Saving…" : "Save draft"}</button>{!listingFeePaid && <button type="button" disabled={saving} onClick={() => void payFee()} className="btn-gold px-5 py-2.5">{saving ? "Processing…" : "Pay ₹2 listing fee"}</button>}<button type="button" disabled={saving || !listingFeePaid} onClick={() => void publish()} className="btn-navy px-5 py-2.5"><BadgeCheck className="h-4 w-4" />Publish listing</button></div></div>
     </form>}
   </div>;
 }

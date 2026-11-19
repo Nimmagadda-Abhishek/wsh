@@ -183,6 +183,7 @@ export const businessApi = {
 
 export const paymentApi = {
   plans: () => apiRequest<any[]>("/api/payments/plans", { auth: false }),
+  listingFeeCheckout: (businessId: string) => apiRequest<any>("/api/payments/listing-fee/checkout", { method: "POST", body: JSON.stringify({ businessId }) }),
   checkout: (planCode: string, businessId: string) =>
     apiRequest<any>("/api/payments/checkout", { method: "POST", body: JSON.stringify({ planCode, businessId }) }),
   verify: (razorpay_order_id: string, razorpay_payment_id: string, razorpay_signature: string) =>

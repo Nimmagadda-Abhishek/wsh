@@ -17,7 +17,7 @@ async function listMembers(memberTypes, req, res) {
   if (ids.length) {
     const result = await supabaseAdmin.from('businesses')
       .select('id, owner_id, name, slug, logo_url, city, description')
-      .in('owner_id', ids).eq('status', 'published').order('created_at', { ascending: false });
+      .in('owner_id', ids).eq('status', 'published').eq('listing_fee_paid', true).order('created_at', { ascending: false });
     if (result.error) throw result.error;
     businesses = result.data || [];
   }
@@ -46,7 +46,7 @@ r.get('/members/:id', asyncHandler(async (req, res) => {
   if (!profile) throw new ApiError(404, 'Member profile not found');
   const { data: businesses, error: businessError } = await supabaseAdmin.from('businesses')
     .select('id, name, slug, logo_url, city, description')
-    .eq('owner_id', profile.id).eq('status', 'published').order('created_at', { ascending: false });
+    .eq('owner_id', profile.id).eq('status', 'published').eq('listing_fee_paid', true).order('created_at', { ascending: false });
   if (businessError) throw businessError;
   res.json({ data: { ...profile, businesses: businesses || [] } });
 }));

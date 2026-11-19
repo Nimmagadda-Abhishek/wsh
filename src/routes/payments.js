@@ -36,12 +36,30 @@ async function activateSubscription(biz, plan, userId) {
 async function fulfillPayment(orderId, paymentId) {
   const { data: pay } = await supabaseAdmin.from('payments').select('*').eq('razorpay_order_id', orderId).maybeSingle();
   if (!pay) throw new ApiError(404, 'Unknown order');
-  if (pay.status === 'paid') return pay;
+  if (pay.status === 'paid') {
+    if (pay.payment_type === 'business_listing') {
+      const { error } = await supabaseAdmin.from('businesses').update({ listing_fee_paid: true })
+        .eq('id', pay.business_id).eq('owner_id', pay.user_id);
+      if (error) throw error;
+    }
+    return pay;
+  }
+  if (pay.payment_type === 'business_listing' && (pay.amount !== 200 || pay.currency !== 'INR'))
+    throw new ApiError(400, 'Listing fee order has an invalid amount');
 
   const { data: claimed } = await supabaseAdmin.from('payments')
     .update({ status: 'paid', razorpay_payment_id: paymentId, paid_at: new Date().toISOString() })
     .eq('id', pay.id).neq('status', 'paid').select().maybeSingle();
   if (!claimed) return pay; // another request already fulfilled it
+
+  if (pay.payment_type === 'business_listing') {
+    const { data: biz, error } = await supabaseAdmin.from('businesses')
+      .update({ listing_fee_paid: true }).eq('id', pay.business_id).eq('owner_id', pay.user_id).select('id, name').maybeSingle();
+    if (error) throw error;
+    if (!biz) throw new ApiError(404, 'Business not found for this payment');
+    await notify(pay.user_id, 'Listing fee paid', `The ₹2 listing fee for ${biz.name} is confirmed. You can now publish your business.`, { paymentId: pay.id, businessId: biz.id });
+    return claimed;
+  }
 
   const [{ data: plan }, { data: biz }] = await Promise.all([
     supabaseAdmin.from('plans').select('*').eq('id', pay.plan_id).single(),
@@ -93,6 +111,28 @@ r.post('/checkout', requireAuth, requireApproved, validate(z.object({ planCode: 
     } });
   }));
 
+// POST /api/payments/listing-fee/checkout { businessId } -> fixed ₹2 Razorpay order
+r.post('/listing-fee/checkout', requireAuth, requireApproved,
+  validate(z.object({ businessId: z.string().uuid() })), asyncHandler(async (req, res) => {
+    const biz = await loadOwnedBusiness(req.body.businessId, req.user);
+    if (biz.listing_fee_paid) return res.json({ data: { paid: true, businessId: biz.id } });
+
+    const order = await rzp.orders.create({
+      amount: 200, currency: 'INR', receipt: `listing_${biz.id.slice(0, 8)}_${Date.now()}`,
+      notes: { business_id: biz.id, payment_type: 'business_listing', user_id: req.user.id },
+    });
+    const { error } = await supabaseAdmin.from('payments').insert({
+      user_id: req.user.id, business_id: biz.id, payment_type: 'business_listing',
+      razorpay_order_id: order.id, amount: 200, currency: 'INR', status: 'created',
+    });
+    if (error) throw error;
+    res.status(201).json({ data: {
+      orderId: order.id, amount: order.amount, currency: order.currency, keyId: env.rzpKeyId,
+      name: 'WS Hub business listing fee', description: 'One-time business listing fee',
+      prefill: { email: req.user.email }, businessId: biz.id,
+    } });
+  }));
+
 // POST /api/payments/verify  – call after Razorpay Checkout success handler
 r.post('/verify', requireAuth, requireApproved, validate(z.object({
   razorpay_order_id: z.string(), razorpay_payment_id: z.string(), razorpay_signature: z.string(),
@@ -109,7 +149,7 @@ r.post('/verify', requireAuth, requireApproved, validate(z.object({
 r.get('/history', requireAuth, requireApproved, asyncHandler(async (req, res) => {
   const pg = getPage(req.query);
   const { data, count, error } = await supabaseAdmin.from('payments')
-    .select('id, amount, currency, status, paid_at, created_at, razorpay_payment_id, plan:plans(code, name), business:businesses(id, name)', { count: 'exact' })
+    .select('id, amount, currency, status, payment_type, paid_at, created_at, razorpay_payment_id, plan:plans(code, name), business:businesses(id, name)', { count: 'exact' })
     .eq('user_id', req.user.id).order('created_at', { ascending: false }).range(pg.from, pg.to);
   if (error) throw error;
   res.json({ data, meta: pageMeta(pg, count) });
