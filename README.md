@@ -3,8 +3,8 @@
 Express API on top of Supabase (Postgres, Auth, Storage) with Razorpay payments.
 
 ## Setup
-1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, `supabase/business_listing_fee.sql`, `supabase/founder_profile_social_links.sql`, and `supabase/business_portfolio_fields.sql`.
-2. Supabase **Auth > URL Configuration**: add `https://ws-portel.web.app` to Site URL / Redirect URLs.
+1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, `supabase/business_listing_fee.sql`, and `supabase/founder_profile_social_links.sql`. For existing databases, also apply `supabase/business_portfolio_fields.sql` and `supabase/business_mission_vision.sql`.
+2. Supabase **Auth > URL Configuration**: add `https://warangal-startups.vercel.app` to Site URL / Redirect URLs (the previous `https://ws-portel.web.app` origin is also accepted).
 3. `cp .env.example .env` and fill in the keys (Supabase *Project Settings > API*, Razorpay dashboard). Use Razorpay credentials for the environment you intend to run, and configure payment auto-capture.
 4. `npm install && npm run dev` → http://localhost:4000/health
 5. Optional but recommended: Razorpay dashboard → Webhooks → `https://<your-api>/api/payments/webhook`, events `payment.captured`, `payment.failed`, `order.paid`. Copy the webhook secret into `RAZORPAY_WEBHOOK_SECRET`. Without it, the API still starts and checkout signature verification works; the webhook endpoint returns 503 until configured.
@@ -15,11 +15,9 @@ Express API on top of Supabase (Postgres, Auth, Storage) with Razorpay payments.
 The frontend sends `Authorization: Bearer <access_token>` (from `/api/auth/login`, or from supabase-js directly, e.g. Google OAuth). Tokens are validated with `supabase.auth.getUser`. Responses are `{ data, meta? }` or `{ error, details? }`.
 
 ## WS Hub website owner pages
-The React frontend source is included in `frontend/`. Run `npm install` and `npm run dev` from that directory for local development; set `VITE_API_URL` to this API's origin. The site includes `/#/profile/edit`, `/#/businesses/manage`, `/#/businesses/:id/edit`, `/#/businesses/:id/payment`, `/#/auth/verified`, and `/#/auth/reset-password`. The founder directory and member pages use the public directory endpoints; profile contact details and social links are returned only for approved accounts. Add the confirmation and recovery URLs from `.env` to Supabase Authentication → URL Configuration → Redirect URLs. For production, use `https://ws-portel.web.app/#/auth/verified` and `https://ws-portel.web.app/#/auth/reset-password`; for local Vite development, use the equivalent `http://localhost:5173/#/...` URLs. Hash routes require no hosting rewrites. Deploy the frontend separately to make changes live.
+The React frontend source is included in `frontend/`. Run `npm install` and `npm run dev` from that directory for local development; set `VITE_API_URL` to this API's origin. The site includes `/#/profile/edit`, `/#/businesses/manage`, `/#/businesses/:id/edit`, `/#/auth/verified`, and `/#/auth/reset-password`. Add the confirmation and recovery URLs from `.env` to Supabase Authentication → URL Configuration → Redirect URLs. For production, use `https://ws-portel.web.app/#/auth/verified` and `https://ws-portel.web.app/#/auth/reset-password`; for local Vite development, use the equivalent `http://localhost:5173/#/...` URLs. Hash routes require no hosting rewrites. Deploy the frontend separately to make changes live.
 
 The profile editor sends the API's `fullName` field. Business edit payloads use `categoryId`, `postalCode`, `socialLinks`, `logoUrl`, and `coverUrl`; optional nullable profile values may be cleared. Password changes from the reset screen require the recovery access token from Supabase's email link.
-
-Business profile edits also accept `mapUrl` (Google Maps share URL), `listingType` (`business` or `startup`), `establishedYear`, `employeeCount`, `products` (ordered `{name, description, price?, image?}` entries), and `gallery` (ordered `{image, label, group}` entries; group is `Office`, `Team`, `Events`, `Products`, or `Other`). Service records use the existing service endpoints and plan limits. Upload portfolio media with multipart field `file`, then include the returned URL in the business update. The public profile review form requires a signed-in, approved member; owners cannot review their own business. Public profiles also offer URL sharing and a downloadable `.vcf` digital contact card.
 
 ## Endpoints
 | Area | Method & path | Auth |
@@ -33,11 +31,11 @@ Business profile edits also accept `mapUrl` (Google Maps share URL), `listingTyp
 | | GET `/api/profile/public/:username` | – |
 | **Directory** | GET `/api/directory/founders?page=&limit=` · `/investors?page=&limit=` (approved members and published businesses) · GET `/api/directory/members/:id` | – |
 | | GET `/api/profile/favorites` · GET `/api/profile/notifications` · PATCH `/api/profile/notifications/read` | ✔ |
-| **Business** | GET `/api/businesses?q=&category=&city=&minRating=&listingType=business\|startup&sort=&page=&limit=` (published listings only) | – |
+| **Business** | GET `/api/businesses?q=&category=&city=&minRating=&sort=&page=&limit=` | – |
+| | GET `/api/share/business/:slug` (published business logo + synopsis Open Graph preview; browser redirects to the WS Hub profile) | – |
 | | GET `/api/businesses/:idOrSlug` (drafts visible to owner/admin) · POST `/:id/view` | optional |
 | | POST `/api/businesses` · GET `/mine` · PATCH/DELETE `/:id` · POST `/:id/publish` `/unpublish` | ✔ owner |
 | | POST `/:id/logo` · `/:id/cover` (multipart `file`) | ✔ owner |
-| | POST `/:id/portfolio-media?kind=product\|gallery` (multipart `file`, PNG/JPG/WEBP/GIF, max 5 MB) | ✔ owner |
 | | GET `/:id/services` · POST/PATCH/DELETE `/:id/services[/:serviceId]` (plan-limited) | owner for writes |
 | | GET `/:id/reviews` · POST `/:id/reviews` `{rating,comment}` · DELETE `/:id/reviews/mine` | ✔ for writes |
 | | POST/DELETE `/:id/favorite` | ✔ |
@@ -65,3 +63,13 @@ New accounts get `profiles.approval_status = 'pending'`. Until an administrator 
 - Plans (Free / Pro ₹499 / Premium ₹999) and categories are seed data in `schema.sql`. Edit freely.
 - Writes go through this API with the service-role key; RLS policies protect direct client access.
 - Business lifecycle: `draft` → `published` (requires description, category, city, contact) → `suspended` (admin only).
+
+## Business portfolio editor additions
+
+For existing databases, apply `supabase/business_portfolio_fields.sql` in Supabase SQL Editor before deploying this update. The migration adds the business/startup directory choice, Google Maps URL, established year, employee count, products, and categorized gallery data. A fresh install gets the same fields from `supabase/schema.sql`.
+
+Business updates accept `mission` and `vision` (up to 2,000 characters each), `mapUrl`, `listingType` (`business` or `startup`), `establishedYear`, `employeeCount`, ordered `products` (`name`, `description`, optional `price` and `image`), and ordered `gallery` (`image`, `label`, `group`: Office, Team, Events, Products, or Other). Filter published listings with `GET /api/businesses?listingType=business` or `?listingType=startup`. Upload a product/gallery image through `POST /api/businesses/:id/portfolio-media?kind=product|gallery`, as multipart field `file` (PNG/JPG/WEBP/GIF, up to 5 MB); save its returned URL in the portfolio update. Services and reviews use their existing endpoints. The public business profile supports reviews, URL sharing, and a downloadable `.vcf` contact card.
+
+## Production website and API URLs
+
+The website is https://warangal-startups.vercel.app; the API is https://wsh-gadn.onrender.com. Set the Vercel project environment variable VITE_API_URL=https://wsh-gadn.onrender.com. On Render, set FRONTEND_URL=https://warangal-startups.vercel.app; the API allows the Vercel origin in CORS by default. Apply supabase/business_mission_vision.sql to existing databases before using mission and vision.

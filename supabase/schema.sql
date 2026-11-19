@@ -95,6 +95,8 @@ create table public.businesses (
   name text not null,
   slug text not null unique,
   description text,
+  mission text,
+  vision text,
   logo_url text,
   cover_url text,
   map_url text,

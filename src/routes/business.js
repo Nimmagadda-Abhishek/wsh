@@ -17,6 +17,8 @@ const gallerySchema = z.object({ image: z.string().url(), label: z.string().trim
 const bodySchema = z.object({
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(5000),
+  mission: z.string().trim().max(2000).nullable(),
+  vision: z.string().trim().max(2000).nullable(),
   categoryId: z.string().uuid().nullable(),
   email: z.string().email().nullable(),
   phone: z.string().trim().max(20).nullable(),
@@ -42,7 +44,7 @@ const bodySchema = z.object({
 }).partial();
 
 const toRow = (b) => clean({
-  name: b.name, description: b.description, category_id: b.categoryId, email: b.email, phone: b.phone,
+  name: b.name, description: b.description, mission: b.mission, vision: b.vision, category_id: b.categoryId, email: b.email, phone: b.phone,
   website: b.website, address: b.address, city: b.city, state: b.state, country: b.country,
   map_url: b.mapUrl, listing_type: b.listingType, established_year: b.establishedYear, employee_count: b.employeeCount,
   postal_code: b.postalCode, latitude: b.latitude, longitude: b.longitude, hours: b.hours,
@@ -121,6 +123,7 @@ r.get('/:idOrSlug', optionalAuth, asyncHandler(async (req, res) => {
       .eq('business_id', biz.id).order('created_at', { ascending: false }).limit(5),
     req.user ? supabaseAdmin.from('favorites').select('business_id').eq('user_id', req.user.id).eq('business_id', biz.id).maybeSingle() : { data: null },
   ]);
+  if (services.error) throw services.error;
   res.json({ data: { ...biz, services: services.data, recentReviews: reviews.data, isFavorite: !!fav.data, isOwner } });
 }));
 
