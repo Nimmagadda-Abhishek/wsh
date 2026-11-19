@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { BadgeCheck, Building2, CreditCard, RefreshCw, Search, ShieldAlert, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { adminApi, type ApiMeta } from "../api";
 import { Shimmer } from "../components/ui/Shimmer";
+import { useStore } from "../store";
 
 type AdminStats = { users: number; pendingUsers: number; businesses: number; published: number; revenueMinor: number };
 type AdminUser = { id: string; email?: string; full_name: string; role: string; approval_status: string; created_at: string; city?: string; country?: string };
@@ -21,6 +22,7 @@ const inputClass = "h-10 w-full rounded-md border border-slate-300 bg-white px-3
 const statusTone = (status: string) => status === "paid" || status === "approved" || status === "published" ? "bg-emerald-50 text-emerald-700" : status === "failed" || status === "rejected" || status === "suspended" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800";
 
 export default function AdminPanel() {
+  const user = useStore((state) => state.user);
   const [tab, setTab] = useState<"users" | "businesses" | "payments">("users");
   const [status, setStatus] = useState("pending");
   const [query, setQuery] = useState("");
@@ -77,6 +79,9 @@ export default function AdminPanel() {
     catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update account approval."); }
     finally { setBusy(""); }
   };
+
+  if (!user) return <Navigate to="/login" replace state={{ from: "/admin" }} />;
+  if (user.role !== "Admin") return <Navigate to="/dashboard" replace />;
 
   return <main className="page-in mx-auto max-w-[1280px] px-4 py-9 sm:px-6 lg:px-8">
     <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-gold-800">WS Hub administration</p><h1 className="mt-1 text-[28px] font-black text-navy-900">Admin panel</h1><p className="mt-1 text-[13px] text-slate-600">Review accounts, inspect businesses, and track payments.</p></div><button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-4 py-2.5 text-[12px] font-semibold text-navy-800 hover:bg-navy-50"><RefreshCw className="h-4 w-4" /> Refresh</button></div>
