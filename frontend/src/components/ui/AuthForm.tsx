@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Lock } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { login, toast, type Role } from "../../store";
 import { ChoiceGroup, Field, inputCls, PrimaryBtn } from "./Modal";
 import { authApi, setSession } from "../../api";
@@ -8,6 +8,7 @@ import { authApi, setSession } from "../../api";
 const roles: Role[] = ["Founder", "Investor", "Business", "Mentor", "Student", "Professional"];
 
 export function AuthForm({ reason, onDone, compact = false }: { reason?: string; onDone?: () => void; compact?: boolean }) {
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -51,7 +52,9 @@ export function AuthForm({ reason, onDone, compact = false }: { reason?: string;
         email: result.user.email,
         role: accountRole === "admin" ? "Admin" : memberRole === "investor" ? "Investor" : memberRole === "mentor" ? "Mentor" : memberRole === "student" ? "Student" : memberRole === "professional" ? "Professional" : accountRole === "business_owner" || memberRole === "business" ? "Business" : memberRole === "founder" ? "Founder" : role,
       });
-      onDone?.();
+      if (accountRole === "admin") navigate("/admin", { replace: true });
+      else if (onDone) onDone();
+      else navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
     } finally {
