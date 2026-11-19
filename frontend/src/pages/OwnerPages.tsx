@@ -18,6 +18,19 @@ function Notice({ children, error = false }: { children: string; error?: boolean
   return <div role={error ? "alert" : "status"} className={`mb-4 rounded-lg px-4 py-3 text-[12.5px] ${error ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-800"}`}>{children}</div>;
 }
 
+function formError(reason: unknown, fallback: string) {
+  if (!reason || typeof reason !== "object") return fallback;
+  const error = reason as { message?: string; details?: unknown };
+  if (Array.isArray(error.details) && error.details.length) {
+    const details = error.details.map((item) => {
+      const detail = item as { path?: string; message?: string };
+      return `${detail.path || "Field"}: ${detail.message || "Invalid value"}`;
+    });
+    return `${error.message || "Please check the entered details."} ${details.join("; ")}`;
+  }
+  return error.message || fallback;
+}
+
 type ListingCheckoutOptions = {
   key: string; amount: number; currency: string; name: string; description: string; order_id: string;
   prefill?: { email?: string };
@@ -260,10 +273,10 @@ export function EditBusinessPage() {
     finally { setUploadingMedia(null); }
   };
   const businessPayload = () => ({
-    name: form.name.trim(), description: form.description, categoryId: form.categoryId || null, email: form.email || null, phone: form.phone || null,
-    website: form.website || null, address: form.address || null, city: form.city || null, state: form.state || null, country: form.country || null,
-    postalCode: form.postalCode || null, latitude: form.latitude ? Number(form.latitude) : null, longitude: form.longitude ? Number(form.longitude) : null,
-    tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean), hours: form.hours, socialLinks: Object.fromEntries(Object.entries(form.socialLinks).filter(([, value]) => value.trim())), logoUrl: form.logoUrl || null, coverUrl: form.coverUrl || null,
+    name: form.name.trim(), description: form.description.trim(), categoryId: form.categoryId || null, email: form.email.trim() || null, phone: form.phone.trim() || null,
+    website: form.website.trim() || null, address: form.address.trim() || null, city: form.city.trim() || null, state: form.state.trim() || null, country: form.country.trim() || null,
+    postalCode: form.postalCode.trim() || null, latitude: form.latitude.trim() ? Number(form.latitude) : null, longitude: form.longitude.trim() ? Number(form.longitude) : null,
+    tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean), hours: form.hours, socialLinks: Object.fromEntries(Object.entries(form.socialLinks).map(([key, value]) => [key, value.trim()]).filter(([, value]) => value)), logoUrl: form.logoUrl.trim() || null, coverUrl: form.coverUrl.trim() || null,
   });
   const save = async (event: FormEvent) => {
     event.preventDefault(); setSaving(true); setError(""); setMessage(""); setMissing([]);
@@ -273,22 +286,32 @@ export function EditBusinessPage() {
     } catch (reason) {
       const details = (reason as { details?: { missing?: string[] } })?.details;
       setMissing(details?.missing || []);
-      setError(reason instanceof Error ? reason.message : "Could not save business details.");
+      setError(formError(reason, "Could not save business details."));
     } finally { setSaving(false); }
   };
   const publish = async () => {
     setSaving(true); setError(""); setMessage(""); setMissing([]);
-    const required = [!form.name.trim() && "business name", !form.description.trim() && "description", !form.categoryId && "category", !form.city.trim() && "city", !form.phone.trim() && !form.email.trim() && "phone or email"].filter(Boolean) as string[];
-    if (required.length) { setMissing(required); setError("Complete the required business details before publishing."); setSaving(false); return; }
+    const payload = businessPayload();
+    const required = [!payload.name && "Business name", !payload.description && "Description", !payload.categoryId && "Category", !payload.city && "City", !payload.phone && !payload.email && "Phone or business email"].filter(Boolean) as string[];
+    const invalid: string[] = [];
+    if (payload.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) invalid.push("Business email must be a valid email address.");
+    const checkUrl = (value: string, label: string) => { try { const parsed = new URL(value); if (!/^https?:$/.test(parsed.protocol)) throw new Error(); } catch { invalid.push(`${label} must be a complete URL beginning with https:// or http://.`); } };
+    if (payload.website) checkUrl(payload.website, "Website");
+    Object.entries(payload.socialLinks).forEach(([platform, value]) => checkUrl(value, `${platform} link`));
+    if (payload.tags.length > 15) invalid.push("Use no more than 15 business tags.");
+    if (payload.tags.some((tag) => tag.length > 30)) invalid.push("Each business tag must be 30 characters or fewer.");
+    if (payload.latitude != null && (!Number.isFinite(payload.latitude) || payload.latitude < -90 || payload.latitude > 90)) invalid.push("Latitude must be between -90 and 90.");
+    if (payload.longitude != null && (!Number.isFinite(payload.longitude) || payload.longitude < -180 || payload.longitude > 180)) invalid.push("Longitude must be between -180 and 180.");
+    if (required.length || invalid.length) { setMissing(required); setError([...required.length ? [`Complete the required fields: ${required.join(", ")}.`] : [], ...invalid].join(" ")); setSaving(false); return; }
     try {
-      await businessApi.update(id, businessPayload());
+      await businessApi.update(id, payload);
       if (!listingFeePaid) {
         navigate(`/businesses/${id}/payment`, { state: { message: "Your business details are saved. Complete the ₹2 listing fee to publish." } });
         return;
       }
       await businessApi.publish(id); setMessage("Your business is now published.");
     }
-    catch (reason) { const details = (reason as { details?: { missing?: string[] } })?.details; setMissing(details?.missing || []); setError(reason instanceof Error ? reason.message : "Could not publish your business."); }
+    catch (reason) { const details = (reason as { details?: { missing?: string[] } })?.details; setMissing(details?.missing || []); setError(formError(reason, "Could not publish your business.")); }
     finally { setSaving(false); }
   };
   const textField = (key: BusinessTextKey, label: string, options: { type?: string; max?: number; placeholder?: string; hint?: string } = {}) => <Field label={label} htmlFor={`business-${key}`} hint={options.hint}><input id={`business-${key}`} className={inputCls} type={options.type || "text"} maxLength={options.max} placeholder={options.placeholder} value={form[key]} onChange={(event) => update(key, event.target.value)} /></Field>;
