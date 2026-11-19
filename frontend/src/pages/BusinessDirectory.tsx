@@ -19,6 +19,7 @@ import { BusinessCard } from "../components/BusinessCard";
 import { Reveal } from "../components/Reveal";
 import { cn } from "../utils/cn";
 import { businessApi, homeApi } from "../api";
+import { BusinessCardShimmer } from "../components/ui/Shimmer";
 
 const PAGE_SIZE = 6;
 const types = ["Startup", "SME", "Large Enterprise"] as const;
@@ -242,6 +243,7 @@ export default function BusinessDirectory() {
   const [focus, setFocus] = useState(false);
   const [apiTotal, setApiTotal] = useState<number | null>(null);
   const [apiBusinesses, setApiBusinesses] = useState<BusinessRecord[] | null>(null);
+  const [businessesLoading, setBusinessesLoading] = useState(true);
   const [categoryOptions, setCategoryOptions] = useState<{ id: string; name: string; slug: string }[]>([]);
 
   useEffect(() => {
@@ -316,6 +318,8 @@ export default function BusinessDirectory() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    setBusinessesLoading(true);
     setApiBusinesses(null);
     businessApi.list({
       q: f.q || undefined,
@@ -370,12 +374,11 @@ export default function BusinessDirectory() {
         cover: b.cover_url || "/images/hero.jpg",
         logo: { initials: b.name?.slice(0, 2).toUpperCase() || "WS", bg: "#0f2a4a", fg: "#ffffff" },
       }));
-      setApiBusinesses(records);
-      setApiTotal(meta?.total ?? records.length);
+      if (active) { setApiBusinesses(records); setApiTotal(meta?.total ?? records.length); }
     }).catch(() => {
-      setApiBusinesses([]);
-      setApiTotal(0);
-    });
+      if (active) { setApiBusinesses([]); setApiTotal(0); }
+    }).finally(() => { if (active) setBusinessesLoading(false); });
+    return () => { active = false; };
   }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -543,7 +546,7 @@ export default function BusinessDirectory() {
               </div>
             )}
 
-            {pageItems.length === 0 ? (
+            {businessesLoading ? <div className="mt-6"><BusinessCardShimmer count={6} /></div> : pageItems.length === 0 ? (
               <div className="mt-6 rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center">
                 <Search className="mx-auto h-8 w-8 text-slate-300" />
                 <h3 className="mt-3 text-[16px] font-bold text-navy-900">Welcome — no businesses yet</h3>

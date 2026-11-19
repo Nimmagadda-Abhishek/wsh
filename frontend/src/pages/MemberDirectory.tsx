@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Building2, ExternalLink, Globe2, Mail, MapPin, Phone, UserRound } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { directoryApi, type ApiMeta, type DirectoryMember } from "../api";
+import { BusinessCardShimmer, MemberProfileShimmer } from "../components/ui/Shimmer";
 
 type DirectoryKind = "founders" | "investors";
 const initials = (name: string) => name.split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase() || "M";
@@ -35,7 +36,7 @@ export default function MemberDirectory({ kind }: { kind: DirectoryKind }) {
     <header className="rounded-2xl bg-navy-900 px-6 py-9 text-white sm:px-9"><p className="text-[11px] font-bold uppercase tracking-[.15em] text-gold-400">WS Hub community</p><h1 className="mt-2 text-[30px] font-black sm:text-[38px]">{title}</h1><p className="mt-2 max-w-2xl text-[13.5px] leading-relaxed text-white/75">{description}</p>{meta && <p className="mt-4 text-[12px] text-white/70">{meta.total} approved {kind === "founders" ? "founders and businesses" : "investors and mentors"}</p>}</header>
 
     {error && <div role="alert" className="mt-6 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-700">{error}</div>}
-    {loading ? <div className="py-16 text-center text-[13px] text-slate-500">Loading member profiles…</div> : members.length === 0 ? <section className="mt-7 rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center"><UserRound className="mx-auto h-8 w-8 text-slate-400"/><h2 className="mt-3 text-[17px] font-bold text-navy-900">No approved profiles yet</h2><p className="mt-1 text-[13px] text-slate-600">Approved {kind === "founders" ? "founders and business owners" : "investors and mentors"} will appear here.</p></section> : <section className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    {loading ? <div className="mt-7"><BusinessCardShimmer count={6} /></div> : members.length === 0 ? <section className="mt-7 rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center"><UserRound className="mx-auto h-8 w-8 text-slate-400"/><h2 className="mt-3 text-[17px] font-bold text-navy-900">No approved profiles yet</h2><p className="mt-1 text-[13px] text-slate-600">Approved {kind === "founders" ? "founders and business owners" : "investors and mentors"} will appear here.</p></section> : <section className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {members.map((member) => <article key={member.id} className="card flex flex-col p-5">
         <div className="flex items-start gap-3"><div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-navy-100 text-[14px] font-black text-navy-800">{member.avatar_url ? <img src={member.avatar_url} alt="" className="h-full w-full object-cover" /> : initials(member.full_name)}</div><div className="min-w-0 flex-1"><h2 className="truncate text-[15px] font-bold text-navy-900">{member.full_name}</h2><p className="mt-0.5 text-[11px] font-semibold capitalize text-gold-800">{member.member_type}</p>{(member.city || member.country) && <p className="mt-1 flex items-center gap-1 text-[11px] text-slate-500"><MapPin className="h-3 w-3"/>{[member.city, member.country].filter(Boolean).join(", ")}</p>}</div></div>
         <p className="mt-4 line-clamp-3 min-h-12 text-[12.5px] leading-relaxed text-slate-600">{member.bio || "WS Hub community member."}</p>
@@ -55,16 +56,23 @@ export default function MemberDirectory({ kind }: { kind: DirectoryKind }) {
 export function MemberProfilePage() {
   const { id = "" } = useParams();
   const [member, setMember] = useState<DirectoryMember | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    directoryApi.member(id).then((result) => { if (active) setMember(result); })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Member profile not found."); });
+    setLoading(true); setMember(null); setError("");
+    directoryApi.member(id).then((result) => {
+      if (!result?.id) throw new Error("The member profile response was incomplete.");
+      if (active) setMember(result);
+    })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Member profile not found."); })
+      .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [id]);
 
+  if (loading) return <MemberProfileShimmer />;
   if (error) return <main className="mx-auto max-w-2xl px-4 py-16 text-center"><h1 className="text-2xl font-black text-navy-900">Profile unavailable</h1><p className="mt-2 text-[13px] text-slate-600">{error}</p><Link to="/founders" className="btn-navy mt-5 inline-flex px-5 py-2.5">Browse members</Link></main>;
-  if (!member) return <main className="mx-auto max-w-2xl px-4 py-16 text-center text-[13px] text-slate-500">Loading profile…</main>;
+  if (!member) return <main className="mx-auto max-w-2xl px-4 py-16 text-center"><h1 className="text-2xl font-black text-navy-900">Profile unavailable</h1><Link to="/founders" className="btn-navy mt-5 inline-flex px-5 py-2.5">Browse members</Link></main>;
 
   const directory = member.member_type === "investor" || member.member_type === "mentor" ? "/investors" : "/founders";
   const socialLinks = Object.entries(member.social_links || {}).filter(([, url]) => typeof url === "string" && /^https?:\/\//i.test(url));

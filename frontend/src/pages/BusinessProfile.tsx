@@ -41,6 +41,7 @@ import { Reveal } from "../components/Reveal";
 import { cn } from "../utils/cn";
 import { useTrackView } from "../components/ui/Actions";
 import { businessApi } from "../api";
+import { Shimmer } from "../components/ui/Shimmer";
 
 const tabs = ["Overview", "Products", "Services", "Gallery", "Achievements", "Reviews", "Contact"] as const;
 type Tab = (typeof tabs)[number];
@@ -187,7 +188,7 @@ export default function BusinessProfile() {
   }, []);
 
   if (profileLoading) {
-    return <div className="page-in mx-auto max-w-[1280px] px-4 py-16"><div className="h-64 animate-pulse rounded-xl bg-slate-100" /></div>;
+    return <main role="status" aria-label="Loading business profile" className="page-in mx-auto max-w-[1280px] space-y-6 px-4 py-10 sm:px-6 lg:px-8"><Shimmer className="h-64 rounded-xl sm:h-80" /><div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]"><section className="card space-y-4 p-6"><Shimmer className="h-8 w-2/3" /><Shimmer className="h-4 w-1/3" /><Shimmer className="h-24 w-full" /><Shimmer className="h-12 w-full" /></section><aside className="card space-y-3 p-6"><Shimmer className="h-6 w-1/2" /><Shimmer className="h-10 w-full" /><Shimmer className="h-10 w-full" /><Shimmer className="h-10 w-full" /></aside></div></main>;
   }
   if (!b) return <Navigate to="/businesses" replace />;
 

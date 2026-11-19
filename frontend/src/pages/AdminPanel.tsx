@@ -3,6 +3,7 @@ import { BadgeCheck, Building2, CreditCard, RefreshCw, Search, ShieldAlert, User
 import type { LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { adminApi, type ApiMeta } from "../api";
+import { Shimmer } from "../components/ui/Shimmer";
 
 type AdminStats = { users: number; pendingUsers: number; businesses: number; published: number; revenueMinor: number };
 type AdminUser = { id: string; email?: string; full_name: string; role: string; approval_status: string; created_at: string; city?: string; country?: string };
@@ -99,7 +100,7 @@ export default function AdminPanel() {
           </div>
         </div>
 
-        {loading ? <div className="p-10 text-center text-[13px] text-slate-500">Loading {tab}…</div> : tab === "users" ? <div className="divide-y divide-line">
+        {loading ? <div role="status" aria-label={`Loading ${tab}`} className="space-y-3 p-4">{Array.from({ length: 5 }, (_, index) => <div key={index} className="flex items-center gap-3 rounded-lg border border-line p-4"><Shimmer className="h-11 w-11 rounded-full" /><div className="flex-1 space-y-2"><Shimmer className="h-4 w-1/3" /><Shimmer className="h-3 w-2/3" /></div><Shimmer className="h-8 w-20" /></div>)}</div> : tab === "users" ? <div className="divide-y divide-line">
           {users.length === 0 && <p className="p-10 text-center text-[13px] text-slate-500">No users match this filter.</p>}
           {users.map((user) => <article key={user.id} className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><h2 className="truncate text-[13.5px] font-bold text-navy-900">{user.full_name || "Unnamed member"}</h2><p className="truncate text-[12px] text-slate-600">{user.email || "No email on profile"} · {user.role}</p><p className="mt-1 text-[11px] text-slate-500">Joined {dateLabel(user.created_at)}{user.city ? ` · ${user.city}${user.country ? `, ${user.country}` : ""}` : ""}</p><p className="mt-1 break-all font-mono text-[10px] text-slate-400">{user.id}</p></div><div className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[10.5px] font-bold ${statusTone(user.approval_status || "pending")}`}>{user.approval_status || "pending"}</span>{user.approval_status !== "approved" && <button type="button" disabled={busy === user.id} onClick={() => void reviewUser(user.id, "approved")} className="rounded-md bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50">{busy === user.id ? "Saving…" : "Approve"}</button>}{user.approval_status !== "rejected" && <button type="button" disabled={busy === user.id} onClick={() => void reviewUser(user.id, "rejected")} className="rounded-md border border-slate-300 px-3 py-2 text-[11px] font-semibold text-slate-700 disabled:opacity-50">Reject</button>}</div></article>)}
         </div> : tab === "businesses" ? <div className="divide-y divide-line">

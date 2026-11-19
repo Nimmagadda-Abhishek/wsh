@@ -65,6 +65,7 @@ export async function apiRequest<T>(
 
   const makeRequest = () => fetch(`${API_BASE}${path}`, {
     ...rest,
+    signal: rest.signal ?? AbortSignal.timeout(20_000),
     body,
     headers: requestHeaders,
   });
@@ -76,6 +77,7 @@ export async function apiRequest<T>(
       try {
         const refreshed = await fetch(`${API_BASE}/api/auth/refresh`, {
           method: "POST",
+          signal: AbortSignal.timeout(20_000),
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ refreshToken }),
         });
@@ -118,7 +120,8 @@ export type DirectoryMember = { id: string; member_type: string; full_name: stri
 export const directoryApi = {
   founders: (page = 1, limit = 18) => apiRequest<{ data: DirectoryMember[]; meta: ApiMeta }>(`/api/directory/founders?page=${page}&limit=${limit}`, { auth: false }),
   investors: (page = 1, limit = 18) => apiRequest<{ data: DirectoryMember[]; meta: ApiMeta }>(`/api/directory/investors?page=${page}&limit=${limit}`, { auth: false }),
-  member: (id: string) => apiRequest<{ data: DirectoryMember }>(`/api/directory/members/${encodeURIComponent(id)}`, { auth: false }).then((result) => result.data),
+  // apiRequest unwraps the common { data: ... } envelope already.
+  member: (id: string) => apiRequest<DirectoryMember>(`/api/directory/members/${encodeURIComponent(id)}`, { auth: false }),
 };
 
 export const homeApi = {

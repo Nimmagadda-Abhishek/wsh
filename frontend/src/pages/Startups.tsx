@@ -11,6 +11,8 @@ import { Modal } from "../components/ui/Modal";
 import { Avatar } from "../components/ProfileShell";
 import { clearCompareStartups, toast, toggleCompareStartup, track, useStore } from "../store";
 import { cn } from "../utils/cn";
+import { businessApi } from "../api";
+import { BusinessCardShimmer } from "../components/ui/Shimmer";
 
 const HERO = "/images/hero.jpg";
 const fundingSteps = [0, 10, 50, 100, 300, 500, 1000];
@@ -173,8 +175,34 @@ function Toolbar() {
 }
 
 export default function Startups() {
+  const [businesses, setBusinesses] = useState<any[]>([]);
+  const [businessesLoading, setBusinessesLoading] = useState(true);
+  const [businessesError, setBusinessesError] = useState("");
+  useEffect(() => {
+    let active = true;
+    businessApi.list({ page: 1, limit: 12, sort: "newest" })
+      .then((result: any) => { if (active) setBusinesses(Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : []); })
+      .catch((reason: unknown) => { if (active) setBusinessesError(reason instanceof Error ? reason.message : "Businesses could not be loaded."); })
+      .finally(() => { if (active) setBusinessesLoading(false); });
+    return () => { active = false; };
+  }, []);
+
   return (
     <>
+      <section className="mx-auto max-w-[1280px] px-4 pt-8 sm:px-6 lg:px-8" aria-labelledby="listed-businesses-heading">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-gold-700">WS Hub directory</p><h2 id="listed-businesses-heading" className="mt-1 text-2xl font-black text-navy-900">Businesses & startups</h2><p className="mt-1 text-[13px] text-slate-600">Explore businesses listed by founders in the WS Hub community.</p></div>
+          <Link to="/businesses" className="inline-flex items-center gap-1 text-[12px] font-bold text-navy-800 hover:text-gold-800">Browse all businesses <ArrowRight className="h-4 w-4" /></Link>
+        </div>
+        {businessesLoading ? <BusinessCardShimmer count={6} /> : businessesError ? <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-[13px] text-red-700">{businessesError}</div> : businesses.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {businesses.map((business) => <article key={business.id || business.slug} className="group overflow-hidden rounded-xl border border-line bg-white shadow-[var(--shadow-card)] transition-shadow hover:shadow-lg">
+            <Link to={`/businesses/${encodeURIComponent(business.slug || business.id)}`} aria-label={`View ${business.name}`} className="block aspect-[16/8] overflow-hidden bg-navy-50">{(business.cover_url || business.coverUrl) ? <img src={business.cover_url || business.coverUrl} alt="" loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" /> : <div className="flex h-full items-center justify-center text-navy-300"><Building2 className="h-12 w-12" /></div>}</Link>
+            <div className="p-4"><div className="flex items-center gap-3">{(business.logo_url || business.logoUrl) ? <img src={business.logo_url || business.logoUrl} alt="" className="h-11 w-11 rounded-lg border border-line object-cover" /> : <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-navy-800 text-sm font-black text-white">{String(business.name || "WS").slice(0, 2).toUpperCase()}</span>}<div className="min-w-0"><h3 className="truncate text-[15px] font-bold text-navy-900"><Link to={`/businesses/${encodeURIComponent(business.slug || business.id)}`} className="hover:text-gold-800">{business.name}</Link></h3><p className="truncate text-[11.5px] text-slate-500">{business.category?.name || business.category || "Business"}{business.city ? ` · ${business.city}` : ""}</p></div></div>
+              <p className="mt-3 line-clamp-2 min-h-10 text-[12.5px] leading-relaxed text-slate-600">{business.description || "Discover this business and its portfolio on WS Hub."}</p><Link to={`/businesses/${encodeURIComponent(business.slug || business.id)}`} className="btn-navy mt-3 flex items-center justify-center gap-1.5 py-2.5 text-[11.5px]">View business <ArrowRight className="h-3.5 w-3.5" /></Link>
+            </div>
+          </article>)}
+        </div> : <div className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-9 text-center text-[13px] text-slate-600">No published business listings are available yet.</div>}
+      </section>
       <DirectoryPage<Startup>
         entity="Startups" singular="Startup" breadcrumb="Startups"
         title={["Discover", "Startups"]} subtitle="Innovative ideas. Bold founders. A stronger Warangal. Find startups building the future, connect with founders and discover investment opportunities."

@@ -19,6 +19,7 @@ import { DashboardStartup } from "./DashboardStartup";
 import { Rocket } from "lucide-react";
 import { BarChart3, Calendar, CalendarCheck, Check, CreditCard, PenSquare, X } from "lucide-react";
 import { profileApi } from "../api";
+import { Shimmer } from "../components/ui/Shimmer";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: Eye },
@@ -69,13 +70,17 @@ export default function Dashboard() {
   const tab = params.get("tab") || "overview";
   const s = useStore((x) => x);
   const [apiProfile, setApiProfile] = useState<any>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
   useEffect(() => {
     document.title = "Dashboard — WS Hub";
   }, []);
   useEffect(() => {
     if (!s.user) return;
-    profileApi.get().then(setApiProfile).catch(() => setApiProfile(null));
+    let active = true;
+    setProfileLoading(true);
+    profileApi.get().then((profile) => { if (active) setApiProfile(profile); }).catch(() => { if (active) setApiProfile(null); }).finally(() => { if (active) setProfileLoading(false); });
     profileApi.notifications(1, 12, true).catch(() => undefined);
+    return () => { active = false; };
   }, [Boolean(s.user)]);
 
   if (!s.user) {
@@ -87,6 +92,8 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  if (profileLoading) return <main role="status" aria-label="Loading your dashboard" className="mx-auto max-w-[1280px] space-y-6 px-4 py-8 sm:px-6 lg:px-8"><div className="card space-y-3 p-6"><Shimmer className="h-4 w-1/4" /><Shimmer className="h-8 w-1/2" /><Shimmer className="h-4 w-2/3" /></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <Shimmer key={index} className="h-28 rounded-xl" />)}</div><div className="grid gap-5 lg:grid-cols-[1fr_320px]"><Shimmer className="h-80 rounded-xl" /><Shimmer className="h-80 rounded-xl" /></div></main>;
 
   const savedB = businesses.filter((b) => s.saved.business.includes(b.slug));
   const savedF = s.saved.founder.map(getFounder).filter(Boolean);
