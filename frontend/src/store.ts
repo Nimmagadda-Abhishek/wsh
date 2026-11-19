@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { authApi, setSession } from "./api";
+import { authApi, getAccessToken, setSession } from "./api";
 
 /* ------------------------------------------------------------------ */
 /* WS Hub client store — auth, saves, requests, applications, alerts   */
@@ -257,6 +257,8 @@ function load(): State {
     const raw = localStorage.getItem(KEY);
     if (!raw) return empty;
     const parsed = JSON.parse(raw);
+    // Do not restore an old account or its private client state after its token is gone.
+    if (!getAccessToken()) return empty;
     // migrate legacy saved businesses
     const legacy = JSON.parse(localStorage.getItem("wshub:saved") || "[]");
     return { ...empty, ...parsed, analytics: { ...empty.analytics, ...parsed.analytics }, membership: { ...emptyMembership, ...parsed.membership }, saved: { ...empty.saved, ...parsed.saved, business: parsed.saved?.business?.length ? parsed.saved.business : legacy }, toasts: [] };
@@ -328,7 +330,10 @@ export const markRead = (id: string) => set((s) => ({ notifications: s.notificat
 
 /* ---------- auth ---------- */
 export function login(user: Omit<User, "verified">) {
-  set({ user: { ...user, verified: user.role !== "Student" } });
+  const signedInUser = { ...user, verified: user.role !== "Student" };
+  const accountChanged = state.user && state.user.email.toLowerCase() !== signedInUser.email.toLowerCase();
+  if (accountChanged) set({ ...empty, user: signedInUser });
+  else set({ user: signedInUser });
   toast(`Welcome, ${user.name.split(" ")[0]}!`);
   if (getState().notifications.length === 0) {
     notify("Welcome to WS Hub", "Complete your profile to get discovered by founders and investors.", "/dashboard");
@@ -345,8 +350,11 @@ export function login(user: Omit<User, "verified">) {
   }
 }
 export function logout() {
-  authApi.logout().catch(() => undefined).finally(() => setSession(null));
-  set({ user: null });
+  // Start revocation while the bearer token is still available, then clear local
+  // credentials and persisted account data immediately instead of waiting on the network.
+  void authApi.logout().catch(() => undefined);
+  setSession(null);
+  set({ ...empty });
   toast("Signed out", "info");
 }
 
