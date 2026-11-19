@@ -18,8 +18,9 @@ import EventDetails from "./pages/EventDetails";
 import { AuthPage, ComingSoon, ErrorBoundary, NotFound } from "./pages/Misc";
 import { AuthResetPasswordPage, BusinessManagerPage, EditBusinessPage, EditProfilePage, EmailVerifiedPage, ListingPaymentPage } from "./pages/OwnerPages";
 import AdminPanel from "./pages/AdminPanel";
+import LegalPage from "./pages/LegalPages";
 
-const roadmap = ["requirements", "collaboration", "jobs", "profile", "map", "achievements", "reviews", "help-center", "contact-us", "privacy-policy", "terms-of-service", "plans", "compare", "for-businesses", "for-startups"];
+const roadmap = ["requirements", "collaboration", "jobs", "profile", "map", "achievements", "reviews", "help-center", "plans", "compare", "for-businesses", "for-startups"];
 
 export default function App() {
   return (
@@ -59,6 +60,13 @@ export default function App() {
               <Route path="/admin" element={<AdminPanel />} />
               <Route path="/auth/verified" element={<EmailVerifiedPage />} />
               <Route path="/auth/reset-password" element={<AuthResetPasswordPage />} />
+              <Route path="/terms-of-service" element={<LegalPage />} />
+              <Route path="/terms-and-conditions" element={<LegalPage />} />
+              <Route path="/privacy-policy" element={<LegalPage />} />
+              <Route path="/refund-policy" element={<LegalPage />} />
+              <Route path="/shipping-policy" element={<LegalPage />} />
+              <Route path="/about-us" element={<LegalPage />} />
+              <Route path="/contact-us" element={<LegalPage />} />
               <Route path="/login" element={<AuthPage />} />
               <Route path="/signup" element={<AuthPage />} />
               {roadmap.map((r) => (

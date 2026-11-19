@@ -38,7 +38,7 @@ const columns: { title: string; links: string[] }[] = [
     title: "Community",
     links: ["Requirements", "Collaboration", "Jobs", "Stories", "Achievements", "Reviews"],
   },
-  { title: "Support", links: ["Help Center", "Contact Us", "Privacy Policy", "Terms of Service"] },
+  { title: "Support", links: ["Contact Us", "About Us", "Privacy Policy", "Terms of Service", "Refund Policy", "Shipping Policy"] },
   { title: "Membership", links: ["Plans", "Compare", "For Businesses", "For Startups"] },
 ];
 
