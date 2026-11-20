@@ -1,15 +1,17 @@
 # WS Portal – Node.js + Supabase Backend
 
-Express API on top of Supabase (Postgres, Auth, Storage). Payment collection is paused; account signup and publishing business listings are free.
+Express API on top of Supabase (Postgres, Auth, Storage). Razorpay collects a one-time ₹2 account joining fee. Business listings are free after signup; there is no recurring signup charge.
 
 ## Setup
-1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, `supabase/business_listing_fee.sql`, and `supabase/founder_profile_social_links.sql`. For existing databases, also apply `supabase/business_portfolio_fields.sql` and `supabase/business_mission_vision.sql`.
+1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, `supabase/business_listing_fee.sql`, `supabase/signup_fee_payment_type.sql`, `supabase/founder_profile_social_links.sql`, `supabase/business_reviews.sql`, and `supabase/startup_details.sql`. For existing databases, also apply `supabase/business_portfolio_fields.sql` and `supabase/business_mission_vision.sql`.
 2. Supabase **Auth > URL Configuration**: add `https://warangal-startups.vercel.app` to Site URL / Redirect URLs (the previous `https://ws-portel.web.app` origin is also accepted).
-3. `cp .env.example .env` and fill in the Supabase keys (Supabase *Project Settings > API*). Razorpay credentials are not required while payments are paused.
+3. `cp .env.example .env` and fill in the Supabase keys (Supabase *Project Settings > API*), `RAZORPAY_KEY_ID`, and `RAZORPAY_KEY_SECRET` from your Razorpay account. Set `PAYMENTS_ENABLED=true`. Configure `RAZORPAY_WEBHOOK_SECRET` and a Razorpay webhook endpoint at `/api/payments/webhook` for payment event reconciliation.
 4. `npm install && npm run dev` → http://localhost:4000/health
-5. Payment checkout, verification, and webhooks remain disabled by default. Set `PAYMENTS_ENABLED=true` and configure Razorpay secrets only when payment collection is approved and intentionally re-enabled.
+5. The ₹2 checkout requires Razorpay credentials and `PAYMENTS_ENABLED=true`. Use live credentials only after Razorpay has approved and activated the merchant account; use test credentials for development.
 6. Create your own account in the portal and verify its email. Then grant it admin access from the backend folder with `npm run seed:admin -- your@email.com`. This script only promotes an existing, email-verified account; it never creates credentials. Keep the service-role key private.
 7. Schedule `select public.expire_subscriptions();` daily (pg_cron or any cron).
+
+If the API reports that `businesses.mission` is missing from the schema cache, run `supabase/business_mission_vision.sql` in the Supabase SQL Editor. It adds both `mission` and `vision` safely and asks PostgREST to reload its schema cache. Confirm the query succeeds, then retry saving the profile.
 
 ## Auth model
 The frontend sends `Authorization: Bearer <access_token>` (from `/api/auth/login`, or from supabase-js directly, e.g. Google OAuth). Tokens are validated with `supabase.auth.getUser`. Responses are `{ data, meta? }` or `{ error, details? }`.
@@ -22,7 +24,7 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 ## Endpoints
 | Area | Method & path | Auth |
 |---|---|---|
-| **Auth** | POST `/api/auth/signup` `{email,password,fullName,phone?,accountType?,memberType?}` → creates account without a joining-fee payment; starts in `pending` approval | – |
+| **Auth** | POST `/api/auth/signup` `{email,password,fullName,phone?,accountType?,memberType?}` → creates account; starts in `pending` approval | – |
 | | POST `/api/auth/login` · `/refresh` `{refreshToken}` · `/forgot-password` · `/resend-verification` | – |
 | | POST `/api/auth/logout` · `/change-password` · `/reset-password` (recovery token) · GET `/me` | ✔ |
 | **Home** | GET `/api/home` (categories, featured, topRated, latest, plans, stats) · `/api/home/categories` · `/api/home/search?q=` | – |
@@ -39,20 +41,20 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 | | GET `/:id/services` · POST/PATCH/DELETE `/:id/services[/:serviceId]` (plan-limited) | owner for writes |
 | | GET `/:id/reviews` · POST `/:id/reviews` `{rating,comment}` · DELETE `/:id/reviews/mine` | ✔ for writes |
 | | POST/DELETE `/:id/favorite` | ✔ |
-| **Payments** | GET `/api/payments/plans` · GET `/api/payments/history` · `/subscription/:businessId` | Read-only/history |
-| | POST `/api/payments/checkout` and `/listing-fee/checkout` | Paused; returns 503 |
-| | POST `/api/payments/verify` | Paused; returns 503 |
-| | POST `/api/payments/webhook` | Paused; returns 503 |
+| **Payments** | GET `/api/payments/signup/status` · POST `/api/payments/signup/checkout` (authenticated, pending accounts allowed) | ✔ |
+| | POST `/api/payments/verify` (server verifies Razorpay signature, captured status, ₹2 amount, and ownership) · POST `/api/payments/webhook` | signup account may verify before admin approval |
+| | GET `/api/payments/plans` · GET `/api/payments/history` · `/subscription/:businessId` · POST `/api/payments/checkout` | Paid plan checkout returns 410; free plan changes remain available |
+| | POST `/api/payments/listing-fee/checkout` | Removed; returns 410 because business listings are free |
 | **Admin** | GET `/api/admin/stats` `/users` `/businesses` `/payments?status=created\|paid\|failed\|refunded` (paginated business-plan payment records) · PATCH `/users/:id/role` `/businesses/:id` · DELETE `/reviews/:id` | ✔ admin |
 | | PATCH `/api/admin/users/:id/approval` `{status: approved\|rejected, note?}` | ✔ admin |
 
 ## Signup and admin approval
-Signup and business publishing are free while payments are paused. Public business listings are shown based on published status; legacy listing-fee flags do not restrict visibility. Existing payment records are retained for history. The member type is saved alongside each account; approved founders and business owners appear in the founders directory, while approved investors and mentors appear in the investors directory.
+Signup requires a one-time ₹2 joining fee before an administrator can approve the account. Business creation and publishing have no additional fee. Public business listings depend on published status, not the legacy listing-fee flag. The member type is saved alongside each account; approved founders and business owners appear in the founders directory, while approved investors and mentors appear in the investors directory.
 
 New accounts get `profiles.approval_status = 'pending'`. Until an administrator approves them in the `/#/admin` panel, protected profile, business, and subscription API routes return `403` with an approval status. Administrators can review users, approve or reject accounts, and inspect user and business records. Existing accounts remain approved when applying the migration. To bootstrap the first admin, sign up and verify an account, then run `npm run seed:admin -- your@email.com` from this backend directory. Sign in at the WS Hub portal using that account's normal email/password or configured social sign-in; the Admin link appears in the navigation and `/#/admin` opens the console. The browser cannot grant itself admin access.
 
-## Payments paused
-Account creation and business listing publication do not require payment. Paid checkout, verification, and webhooks return HTTP 503 unless payment collection is deliberately re-enabled with `PAYMENTS_ENABLED=true` and valid Razorpay credentials. Existing payment records remain available for administration/history. Do not enable payment collection until a provider approves the business model.
+## Signup joining fee
+After email confirmation and sign-in, an unpaid account is sent to `/#/signup/payment`. The server creates a Razorpay order for exactly ₹2, verifies the checkout signature and captured payment against that order, and records the result in `signup_payments` plus the admin payment ledger. Payment is required only once per user account. The admin approval endpoint rejects unpaid accounts. Configure the Razorpay webhook URL and secret for event reconciliation, and configure the matching environment variables in local development and the deployed API. Business listings remain free.
 
 ## Notes / assumptions
 - Plans (Free / Pro ₹499 / Premium ₹999) and categories are seed data in `schema.sql`. Edit freely.

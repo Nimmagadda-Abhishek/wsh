@@ -40,6 +40,23 @@ async function activateSubscription(biz, plan, userId) {
 
 // Marks a payment paid exactly once, then activates the plan. Safe to call from verify AND webhook.
 async function fulfillPayment(orderId, paymentId) {
+  const { data: signupPay } = await supabaseAdmin.from('signup_payments').select('*').eq('razorpay_order_id', orderId).maybeSingle();
+  if (signupPay) {
+    if (signupPay.status !== 'paid') {
+      const { data: claimed } = await supabaseAdmin.from('signup_payments')
+        .update({ status: 'paid', razorpay_payment_id: paymentId, paid_at: new Date().toISOString() })
+        .eq('id', signupPay.id).neq('status', 'paid').select().maybeSingle();
+      if (claimed) {
+        const { error } = await supabaseAdmin.from('payments').update({ status: 'paid', razorpay_payment_id: paymentId, paid_at: claimed.paid_at }).eq('razorpay_order_id', orderId);
+        if (error) throw error;
+      }
+    }
+    if (signupPay.status === 'paid') {
+      const { error } = await supabaseAdmin.from('payments').update({ status: 'paid', razorpay_payment_id: signupPay.razorpay_payment_id, paid_at: signupPay.paid_at }).eq('razorpay_order_id', orderId);
+      if (error) throw error;
+    }
+    return { ...signupPay, status: 'paid', payment_type: 'signup_fee' };
+  }
   const { data: pay } = await supabaseAdmin.from('payments').select('*').eq('razorpay_order_id', orderId).maybeSingle();
   if (!pay) throw new ApiError(404, 'Unknown order');
   if (pay.status === 'paid') {
@@ -85,6 +102,48 @@ r.get('/plans', asyncHandler(async (req, res) => {
   res.json({ data });
 }));
 
+// One-time account joining fee. Listing creation and publishing remain free.
+r.get('/signup/status', requireAuth, asyncHandler(async (req, res) => {
+  const { data, error } = await supabaseAdmin.from('signup_payments').select('status, paid_at, amount_minor')
+    .eq('user_id', req.user.id).eq('status', 'paid').limit(1).maybeSingle();
+  if (error) throw error;
+  res.json({ data: { paid: !!data, payment: data ?? null, amountMinor: 200, currency: 'INR' } });
+}));
+
+r.post('/signup/checkout', requireAuth, validate(z.object({})), asyncHandler(async (req, res) => {
+  requirePaymentsEnabled();
+  const { data: paid, error: paidError } = await supabaseAdmin.from('signup_payments').select('id')
+    .eq('user_id', req.user.id).eq('status', 'paid').limit(1).maybeSingle();
+  if (paidError) throw paidError;
+  if (paid) return res.json({ data: { paid: true } });
+  const { data: existing } = await supabaseAdmin.from('signup_payments').select('*')
+    .eq('user_id', req.user.id).eq('status', 'created').order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (existing) return res.json({ data: {
+    orderId: existing.razorpay_order_id, amount: 200, currency: 'INR', keyId: env.rzpKeyId,
+    name: 'WS Hub account joining fee', description: 'One-time account joining fee', prefill: { email: req.user.email },
+  } });
+  const order = await getRazorpay().orders.create({
+    amount: 200, currency: 'INR', receipt: `signup_${req.user.id.slice(0, 8)}_${Date.now()}`,
+    notes: { user_id: req.user.id, payment_type: 'signup_fee' },
+  });
+  const { error } = await supabaseAdmin.from('signup_payments').insert({
+    email: req.user.email, user_id: req.user.id, razorpay_order_id: order.id, amount_minor: 200, status: 'created',
+  });
+  if (error) throw error;
+  const { error: ledgerError } = await supabaseAdmin.from('payments').insert({
+    user_id: req.user.id, payment_type: 'signup_fee', razorpay_order_id: order.id,
+    amount: 200, currency: 'INR', status: 'created',
+  });
+  if (ledgerError) {
+    await supabaseAdmin.from('signup_payments').delete().eq('razorpay_order_id', order.id);
+    throw ledgerError;
+  }
+  res.status(201).json({ data: {
+    orderId: order.id, amount: order.amount, currency: order.currency, keyId: env.rzpKeyId,
+    name: 'WS Hub account joining fee', description: 'One-time account joining fee', prefill: { email: req.user.email },
+  } });
+}));
+
 // POST /api/payments/checkout  { planCode, businessId } -> Razorpay order
 r.post('/checkout', requireAuth, requireApproved, validate(z.object({ planCode: z.string().min(1), businessId: z.string().uuid() })),
   asyncHandler(async (req, res) => {
@@ -100,56 +159,32 @@ r.post('/checkout', requireAuth, requireApproved, validate(z.object({ planCode: 
       await activateSubscription(biz, plan, req.user.id);
       return res.json({ data: { free: true, plan: plan.code } });
     }
-
-    requirePaymentsEnabled();
-    const order = await getRazorpay().orders.create({
-      amount: plan.price_minor, currency: plan.currency,
-      receipt: `b_${biz.id.slice(0, 8)}_${Date.now()}`,
-      notes: { business_id: biz.id, plan_code: plan.code, user_id: req.user.id },
-    });
-    const { error } = await supabaseAdmin.from('payments').insert({
-      user_id: req.user.id, business_id: biz.id, plan_id: plan.id,
-      razorpay_order_id: order.id, amount: plan.price_minor, currency: plan.currency, status: 'created',
-    });
-    if (error) throw error;
-    res.status(201).json({ data: {
-      orderId: order.id, amount: order.amount, currency: order.currency, keyId: env.rzpKeyId,
-      plan: { code: plan.code, name: plan.name }, prefill: { email: req.user.email },
-    } });
+    throw new ApiError(410, 'Paid memberships are not available. The only active charge is the one-time ₹2 account joining fee.');
   }));
 
 // POST /api/payments/listing-fee/checkout { businessId } -> fixed ₹2 Razorpay order
 r.post('/listing-fee/checkout', requireAuth, requireApproved,
-  validate(z.object({ businessId: z.string().uuid() })), asyncHandler(async (req, res) => {
-    requirePaymentsEnabled();
-    const biz = await loadOwnedBusiness(req.body.businessId, req.user);
-    if (biz.listing_fee_paid) return res.json({ data: { paid: true, businessId: biz.id } });
-
-    const order = await getRazorpay().orders.create({
-      amount: 200, currency: 'INR', receipt: `listing_${biz.id.slice(0, 8)}_${Date.now()}`,
-      notes: { business_id: biz.id, payment_type: 'business_listing', user_id: req.user.id },
-    });
-    const { error } = await supabaseAdmin.from('payments').insert({
-      user_id: req.user.id, business_id: biz.id, payment_type: 'business_listing',
-      razorpay_order_id: order.id, amount: 200, currency: 'INR', status: 'created',
-    });
-    if (error) throw error;
-    res.status(201).json({ data: {
-      orderId: order.id, amount: order.amount, currency: order.currency, keyId: env.rzpKeyId,
-      name: 'WS Hub business listing fee', description: 'One-time business listing fee',
-      prefill: { email: req.user.email }, businessId: biz.id,
-    } });
-  }));
+  asyncHandler(async () => { throw new ApiError(410, 'Business listings are free. The one-time joining fee is collected per account.'); }));
 
 // POST /api/payments/verify  – call after Razorpay Checkout success handler
-r.post('/verify', requireAuth, requireApproved, validate(z.object({
+r.post('/verify', requireAuth, validate(z.object({
   razorpay_order_id: z.string(), razorpay_payment_id: z.string(), razorpay_signature: z.string(),
 })), asyncHandler(async (req, res) => {
   requirePaymentsEnabled();
   const { razorpay_order_id: oid, razorpay_payment_id: pid, razorpay_signature: sig } = req.body;
   if (!safeEqual(hmac(env.rzpKeySecret, `${oid}|${pid}`), sig)) throw new ApiError(400, 'Invalid payment signature');
-  const { data: own } = await supabaseAdmin.from('payments').select('user_id').eq('razorpay_order_id', oid).maybeSingle();
+  const { data: ownSignup } = await supabaseAdmin.from('signup_payments').select('user_id, amount_minor').eq('razorpay_order_id', oid).maybeSingle();
+  const { data: own } = ownSignup ? { data: ownSignup } : await supabaseAdmin.from('payments').select('user_id, amount, currency').eq('razorpay_order_id', oid).maybeSingle();
   if (!own || own.user_id !== req.user.id) throw new ApiError(404, 'Order not found');
+  if (!ownSignup) {
+    const { data: profile } = await supabaseAdmin.from('profiles').select('role, approval_status').eq('id', req.user.id).maybeSingle();
+    if (profile?.role !== 'admin' && profile?.approval_status !== 'approved') throw new ApiError(403, 'Your account must pay the joining fee before using this payment');
+  }
+  const remotePayment = await getRazorpay().payments.fetch(pid);
+  const expectedAmount = ownSignup ? ownSignup.amount_minor : own.amount;
+  const expectedCurrency = ownSignup ? 'INR' : own.currency;
+  if (remotePayment.order_id !== oid || remotePayment.amount !== expectedAmount || remotePayment.currency !== expectedCurrency || remotePayment.status !== 'captured')
+    throw new ApiError(400, ownSignup ? 'Payment is not captured for this ₹2 order yet. Please retry shortly.' : 'Payment is not captured for the expected order amount yet.');
   const pay = await fulfillPayment(oid, pid);
   res.json({ data: { status: pay.status, message: 'Payment verified' } });
 }));
@@ -183,7 +218,7 @@ export const webhookHandler = asyncHandler(async (req, res) => {
   if (event.event === 'payment.captured' || event.event === 'order.paid') {
     const pay = p ?? event.payload?.order?.entity;
     const orderId = p?.order_id ?? pay?.id;
-    if (orderId) await fulfillPayment(orderId, p?.id ?? null).catch((e) => console.error('webhook fulfill:', e.message));
+    if (orderId) await fulfillPayment(orderId, p?.id ?? null);
   } else if (event.event === 'payment.failed' && p?.order_id) {
     await supabaseAdmin.from('payments').update({ status: 'failed', razorpay_payment_id: p.id }).eq('razorpay_order_id', p.order_id).eq('status', 'created');
   }

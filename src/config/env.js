@@ -28,7 +28,7 @@ export const env = {
   supabaseServiceKey: req('SUPABASE_SERVICE_ROLE_KEY'),
   emailRedirectUrl: clientRedirect('EMAIL_REDIRECT_URL', 'auth/verified'),
   passwordResetRedirectUrl: clientRedirect('PASSWORD_RESET_REDIRECT_URL', 'auth/reset-password'),
-  paymentsEnabled: process.env.PAYMENTS_ENABLED === 'true',
+  paymentsEnabled: process.env.PAYMENTS_ENABLED !== 'false',
   rzpKeyId: process.env.RAZORPAY_KEY_ID || '',
   rzpKeySecret: process.env.RAZORPAY_KEY_SECRET || '',
   // Optional when the Razorpay webhook is not configured; browser payment verification remains available.

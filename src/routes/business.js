@@ -9,11 +9,25 @@ import { upload, uploadImage } from '../utils/upload.js';
 const r = Router();
 const MAX_BUSINESSES_PER_USER = 5;
 
-const LIST_FIELDS = 'id, name, slug, description, logo_url, cover_url, city, state, listing_type, established_year, employee_count, map_url, products, gallery, avg_rating, review_count, is_verified, is_featured, category:categories(id, name, slug)';
+const LIST_FIELDS = 'id, name, slug, description, logo_url, cover_url, city, state, listing_type, established_year, employee_count, map_url, products, gallery, startup_details, avg_rating, review_count, is_verified, is_featured, category:categories(id, name, slug)';
 
 const hoursSchema = z.record(z.string(), z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() }));
 const productSchema = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(1000), image: z.string().url().nullable().optional(), price: z.string().trim().max(50).optional() });
 const gallerySchema = z.object({ image: z.string().url(), label: z.string().trim().max(200), group: z.enum(['Office', 'Team', 'Events', 'Products', 'Other']) });
+const startupDetailsSchema = z.object({
+  stage: z.string().trim().max(40).optional(),
+  problem: z.string().trim().max(2000).optional(),
+  solution: z.string().trim().max(2000).optional(),
+  targetAudience: z.string().trim().max(1000).optional(),
+  uniqueValue: z.string().trim().max(1000).optional(),
+  businessModel: z.string().trim().max(250).optional(),
+  marketSize: z.string().trim().max(250).optional(),
+  technologies: z.array(z.string().trim().max(50)).max(20).optional(),
+  traction: z.object({ users: z.string().trim().max(80).optional(), customers: z.string().trim().max(80).optional(), revenue: z.string().trim().max(80).optional(), growth: z.string().trim().max(80).optional() }).optional(),
+  funding: z.object({ status: z.enum(['Bootstrapped', 'Raising', 'Funded']).optional(), amountRaised: z.string().trim().max(80).optional(), seeking: z.string().trim().max(80).optional() }).optional(),
+  followers: z.number().int().min(0).max(100000000).optional(),
+  achievements: z.array(z.string().trim().min(1).max(300)).max(30).optional(),
+}).optional();
 const bodySchema = z.object({
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(5000),
@@ -38,6 +52,7 @@ const bodySchema = z.object({
   employeeCount: z.number().int().min(0).max(10000000).nullable(),
   products: z.array(productSchema).max(100),
   gallery: z.array(gallerySchema).max(100),
+  startupDetails: startupDetailsSchema,
   hours: hoursSchema,
   socialLinks: z.record(z.string(), z.string().url()),
   tags: z.array(z.string().trim().max(30)).max(15),
@@ -48,7 +63,7 @@ const toRow = (b) => clean({
   website: b.website, address: b.address, city: b.city, state: b.state, country: b.country,
   map_url: b.mapUrl, listing_type: b.listingType, established_year: b.establishedYear, employee_count: b.employeeCount,
   postal_code: b.postalCode, latitude: b.latitude, longitude: b.longitude, hours: b.hours,
-  social_links: b.socialLinks, tags: b.tags, logo_url: b.logoUrl, cover_url: b.coverUrl, products: b.products, gallery: b.gallery,
+  social_links: b.socialLinks, tags: b.tags, logo_url: b.logoUrl, cover_url: b.coverUrl, products: b.products, gallery: b.gallery, startup_details: b.startupDetails,
 });
 
 // ---------------------------------------------------------------- list / search
