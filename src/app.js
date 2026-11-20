@@ -37,6 +37,9 @@ app.post('/api/payments/webhook', express.raw({ type: 'application/json', limit:
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+// Supabase may send confirmation links to its configured Site URL when an
+// older email template omits redirectTo. Keep that fallback on the frontend.
+app.get('/', (req, res) => res.redirect(302, `${env.frontendUrl}/#/auth/verified`));
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many attempts, try again later' }, skip: isLocalDevelopmentRequest });
 const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false, skip: isLocalDevelopmentRequest });
