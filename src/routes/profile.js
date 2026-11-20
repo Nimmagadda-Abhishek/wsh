@@ -64,7 +64,7 @@ r.get('/public/:username', asyncHandler(async (req, res) => {
     .eq('username', req.params.username.toLowerCase()).eq('approval_status', 'approved').maybeSingle();
   if (!p) throw new ApiError(404, 'Profile not found');
   const { data: businesses } = await supabaseAdmin.from('businesses')
-    .select('id, name, slug, logo_url, city, avg_rating, review_count').eq('owner_id', p.id).eq('status', 'published').eq('listing_fee_paid', true);
+    .select('id, name, slug, logo_url, city, avg_rating, review_count').eq('owner_id', p.id).eq('status', 'published');
   res.json({ data: { ...p, businesses } });
 }));
 

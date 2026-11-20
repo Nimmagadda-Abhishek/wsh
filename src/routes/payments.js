@@ -9,7 +9,13 @@ import { validate } from '../middleware/validate.js';
 import { ApiError, asyncHandler, loadOwnedBusiness, notify, getPage, pageMeta } from '../utils/helpers.js';
 
 const r = Router();
-const rzp = new Razorpay({ key_id: env.rzpKeyId, key_secret: env.rzpKeySecret });
+const getRazorpay = () => {
+  if (!env.rzpKeyId || !env.rzpKeySecret) throw new ApiError(503, 'Payments are temporarily unavailable.');
+  return new Razorpay({ key_id: env.rzpKeyId, key_secret: env.rzpKeySecret });
+};
+const requirePaymentsEnabled = () => {
+  if (!env.paymentsEnabled) throw new ApiError(503, 'Payments are temporarily unavailable.');
+};
 
 const safeEqual = (a, b) => {
   const x = Buffer.from(a || ''), y = Buffer.from(b || '');
@@ -95,7 +101,8 @@ r.post('/checkout', requireAuth, requireApproved, validate(z.object({ planCode: 
       return res.json({ data: { free: true, plan: plan.code } });
     }
 
-    const order = await rzp.orders.create({
+    requirePaymentsEnabled();
+    const order = await getRazorpay().orders.create({
       amount: plan.price_minor, currency: plan.currency,
       receipt: `b_${biz.id.slice(0, 8)}_${Date.now()}`,
       notes: { business_id: biz.id, plan_code: plan.code, user_id: req.user.id },
@@ -114,10 +121,11 @@ r.post('/checkout', requireAuth, requireApproved, validate(z.object({ planCode: 
 // POST /api/payments/listing-fee/checkout { businessId } -> fixed ₹2 Razorpay order
 r.post('/listing-fee/checkout', requireAuth, requireApproved,
   validate(z.object({ businessId: z.string().uuid() })), asyncHandler(async (req, res) => {
+    requirePaymentsEnabled();
     const biz = await loadOwnedBusiness(req.body.businessId, req.user);
     if (biz.listing_fee_paid) return res.json({ data: { paid: true, businessId: biz.id } });
 
-    const order = await rzp.orders.create({
+    const order = await getRazorpay().orders.create({
       amount: 200, currency: 'INR', receipt: `listing_${biz.id.slice(0, 8)}_${Date.now()}`,
       notes: { business_id: biz.id, payment_type: 'business_listing', user_id: req.user.id },
     });
@@ -137,6 +145,7 @@ r.post('/listing-fee/checkout', requireAuth, requireApproved,
 r.post('/verify', requireAuth, requireApproved, validate(z.object({
   razorpay_order_id: z.string(), razorpay_payment_id: z.string(), razorpay_signature: z.string(),
 })), asyncHandler(async (req, res) => {
+  requirePaymentsEnabled();
   const { razorpay_order_id: oid, razorpay_payment_id: pid, razorpay_signature: sig } = req.body;
   if (!safeEqual(hmac(env.rzpKeySecret, `${oid}|${pid}`), sig)) throw new ApiError(400, 'Invalid payment signature');
   const { data: own } = await supabaseAdmin.from('payments').select('user_id').eq('razorpay_order_id', oid).maybeSingle();
@@ -164,6 +173,7 @@ r.get('/subscription/:businessId', requireAuth, requireApproved, asyncHandler(as
 
 // ---- Webhook (mounted in app.js with express.raw BEFORE express.json) ----
 export const webhookHandler = asyncHandler(async (req, res) => {
+  requirePaymentsEnabled();
   if (!env.rzpWebhookSecret) throw new ApiError(503, 'Payment webhook is not configured. Set RAZORPAY_WEBHOOK_SECRET in the backend environment.');
   const raw = req.body; // Buffer
   if (!safeEqual(hmac(env.rzpWebhookSecret, raw), req.headers['x-razorpay-signature'])) throw new ApiError(400, 'Invalid signature');

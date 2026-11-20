@@ -15,8 +15,9 @@ export const env = {
   supabaseServiceKey: req('SUPABASE_SERVICE_ROLE_KEY'),
   emailRedirectUrl: process.env.EMAIL_REDIRECT_URL,
   passwordResetRedirectUrl: process.env.PASSWORD_RESET_REDIRECT_URL,
-  rzpKeyId: req('RAZORPAY_KEY_ID'),
-  rzpKeySecret: req('RAZORPAY_KEY_SECRET'),
+  paymentsEnabled: process.env.PAYMENTS_ENABLED === 'true',
+  rzpKeyId: process.env.RAZORPAY_KEY_ID || '',
+  rzpKeySecret: process.env.RAZORPAY_KEY_SECRET || '',
   // Optional when the Razorpay webhook is not configured; browser payment verification remains available.
   rzpWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
 };

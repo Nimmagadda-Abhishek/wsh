@@ -7,14 +7,14 @@ const CARD = 'id, name, slug, description, logo_url, cover_url, city, avg_rating
 
 // GET /api/home  – everything the landing page needs in one call
 r.get('/', asyncHandler(async (req, res) => {
-  const pub = () => supabaseAdmin.from('businesses').select(CARD).eq('status', 'published').eq('listing_fee_paid', true);
+  const pub = () => supabaseAdmin.from('businesses').select(CARD).eq('status', 'published');
   const results = await Promise.all([
     supabaseAdmin.from('categories').select('id, name, slug, icon').order('sort_order'),
     pub().eq('is_featured', true).order('avg_rating', { ascending: false }).limit(8),
     pub().gte('review_count', 1).order('avg_rating', { ascending: false }).order('review_count', { ascending: false }).limit(8),
     pub().order('created_at', { ascending: false }).limit(8),
     supabaseAdmin.from('plans').select('code, name, description, price_minor, currency, interval, features').eq('is_active', true).order('sort_order'),
-    supabaseAdmin.from('businesses').select('id', { count: 'exact', head: true }).eq('status', 'published').eq('listing_fee_paid', true),
+    supabaseAdmin.from('businesses').select('id', { count: 'exact', head: true }).eq('status', 'published'),
     supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }),
   ]);
   const [categories, featured, topRated, latest, plans, bizCount, userCount] = results;
@@ -45,7 +45,7 @@ r.get('/search', asyncHandler(async (req, res) => {
   const s = String(req.query.q || '').replace(/[%,()*]/g, ' ').trim().slice(0, 60);
   if (s.length < 2) return res.json({ data: { businesses: [], categories: [] } });
   const [b, c] = await Promise.all([
-    supabaseAdmin.from('businesses').select('id, name, slug, logo_url, city').eq('status', 'published').eq('listing_fee_paid', true).ilike('name', `%${s}%`).limit(6),
+    supabaseAdmin.from('businesses').select('id, name, slug, logo_url, city').eq('status', 'published').ilike('name', `%${s}%`).limit(6),
     supabaseAdmin.from('categories').select('id, name, slug').ilike('name', `%${s}%`).limit(4),
   ]);
   res.json({ data: { businesses: b.data, categories: c.data } });

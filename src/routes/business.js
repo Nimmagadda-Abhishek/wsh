@@ -9,7 +9,7 @@ import { upload, uploadImage } from '../utils/upload.js';
 const r = Router();
 const MAX_BUSINESSES_PER_USER = 5;
 
-const LIST_FIELDS = 'id, name, slug, description, logo_url, cover_url, city, state, listing_type, established_year, employee_count, map_url, products, gallery, avg_rating, review_count, is_verified, is_featured, listing_fee_paid, category:categories(id, name, slug)';
+const LIST_FIELDS = 'id, name, slug, description, logo_url, cover_url, city, state, listing_type, established_year, employee_count, map_url, products, gallery, avg_rating, review_count, is_verified, is_featured, category:categories(id, name, slug)';
 
 const hoursSchema = z.record(z.string(), z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() }));
 const productSchema = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(1000), image: z.string().url().nullable().optional(), price: z.string().trim().max(50).optional() });
@@ -56,7 +56,7 @@ const toRow = (b) => clean({
 r.get('/', asyncHandler(async (req, res) => {
   const pg = getPage(req.query);
   const { q, category, city, minRating, listingType, sort = 'rating' } = req.query;
-  let query = supabaseAdmin.from('businesses').select(LIST_FIELDS, { count: 'exact' }).eq('status', 'published').eq('listing_fee_paid', true);
+  let query = supabaseAdmin.from('businesses').select(LIST_FIELDS, { count: 'exact' }).eq('status', 'published');
 
   if (listingType === 'business' || listingType === 'startup') query = query.eq('listing_type', listingType);
 
@@ -114,7 +114,7 @@ r.get('/:idOrSlug', optionalAuth, asyncHandler(async (req, res) => {
   if (!biz) throw new ApiError(404, 'Business not found');
 
   const isOwner = req.user?.id === biz.owner_id;
-  if ((biz.status !== 'published' || !biz.listing_fee_paid) && !isOwner && !(req.user && await isAdmin(req.user.id)))
+  if (biz.status !== 'published' && !isOwner && !(req.user && await isAdmin(req.user.id)))
     throw new ApiError(404, 'Business not found');
 
   const [services, reviews, fav] = await Promise.all([
@@ -155,7 +155,6 @@ r.delete('/:id', requireAuth, requireApproved, asyncHandler(async (req, res) => 
 r.post('/:id/publish', requireAuth, requireApproved, asyncHandler(async (req, res) => {
   const biz = await loadOwnedBusiness(req.params.id, req.user);
   if (biz.status === 'suspended') throw new ApiError(403, 'This business is suspended. Contact support.');
-  if (!biz.listing_fee_paid) throw new ApiError(402, 'Pay the ₹2 business listing fee before publishing', { paymentRequired: true, amount: 200, currency: 'INR' });
   const missing = ['description', 'category_id', 'city'].filter((f) => !biz[f]);
   if (!biz.phone && !biz.email) missing.push('phone or email');
   if (missing.length) throw new ApiError(422, 'Complete your business profile before publishing', { missing });
@@ -261,8 +260,8 @@ r.get('/:id/reviews', asyncHandler(async (req, res) => {
 // POST /api/businesses/:id/reviews  – create or update my review
 r.post('/:id/reviews', requireAuth, requireApproved, validate(z.object({ rating: z.number().int().min(1).max(5), comment: z.string().trim().max(2000).optional() })),
   asyncHandler(async (req, res) => {
-    const { data: biz } = await supabaseAdmin.from('businesses').select('id, owner_id, name, status, listing_fee_paid').eq('id', req.params.id).maybeSingle();
-    if (!biz || biz.status !== 'published' || !biz.listing_fee_paid) throw new ApiError(404, 'Business not found');
+    const { data: biz } = await supabaseAdmin.from('businesses').select('id, owner_id, name, status').eq('id', req.params.id).maybeSingle();
+    if (!biz || biz.status !== 'published') throw new ApiError(404, 'Business not found');
     if (biz.owner_id === req.user.id) throw new ApiError(403, 'You cannot review your own business');
     const { data, error } = await supabaseAdmin.from('reviews')
       .upsert({ business_id: biz.id, user_id: req.user.id, rating: req.body.rating, comment: req.body.comment }, { onConflict: 'business_id,user_id' })

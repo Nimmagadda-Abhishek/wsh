@@ -17,10 +17,9 @@ const publicUrl = (value, fallback) => {
 
 router.get('/business/:slug', asyncHandler(async (req, res) => {
   const { data: business, error } = await supabaseAdmin.from('businesses')
-    .select('name, slug, description, logo_url, cover_url, phone, email, website, city, state, country, status, listing_fee_paid')
+    .select('name, slug, description, logo_url, cover_url, phone, email, website, city, state, country, status')
     .eq('slug', req.params.slug)
     .eq('status', 'published')
-    .eq('listing_fee_paid', true)
     .maybeSingle();
   if (error) throw error;
   if (!business) throw new ApiError(404, 'Business not found');
