@@ -50,17 +50,6 @@ r.get('/users', asyncHandler(async (req, res) => {
 // PATCH /api/admin/users/:id/approval
 r.patch('/users/:id/approval', validate(z.object({ status: z.enum(['approved', 'rejected']), note: z.string().trim().max(500).optional() })), asyncHandler(async (req, res) => {
   const approved = req.body.status === 'approved';
-  if (approved) {
-    const { data: target, error: targetError } = await supabaseAdmin.from('profiles').select('role').eq('id', req.params.id).maybeSingle();
-    if (targetError) throw targetError;
-    if (!target) throw new ApiError(404, 'User not found');
-    if (target.role !== 'admin') {
-      const { data: payment, error: paymentError } = await supabaseAdmin.from('signup_payments').select('id')
-        .eq('user_id', req.params.id).eq('status', 'paid').limit(1).maybeSingle();
-      if (paymentError) throw paymentError;
-      if (!payment) throw new ApiError(422, 'This account must complete the one-time ₹2 joining fee before approval');
-    }
-  }
   const { data, error } = await supabaseAdmin.from('profiles').update({
     approval_status: req.body.status,
     approval_note: req.body.note || null,
