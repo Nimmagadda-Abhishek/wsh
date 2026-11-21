@@ -3,31 +3,42 @@ import { supabaseAdmin } from '../config/supabase.js';
 import { asyncHandler } from '../utils/helpers.js';
 
 const r = Router();
-const CARD = 'id, name, slug, description, logo_url, cover_url, city, avg_rating, review_count, is_verified, is_featured, category:categories(name, slug)';
+const CARD = 'id, name, slug, description, logo_url, cover_url, city, listing_type, established_year, avg_rating, review_count, is_verified, is_featured, category:categories(name, slug)';
 
 // GET /api/home  – everything the landing page needs in one call
 r.get('/', asyncHandler(async (req, res) => {
   const pub = () => supabaseAdmin.from('businesses').select(CARD).eq('status', 'published');
+  const { data: orderSetting, error: orderError } = await supabaseAdmin.from('app_settings')
+    .select('setting_value').eq('setting_key', 'homepage_featured_order').maybeSingle();
+  if (orderError) throw orderError;
+  const featuredOrder = orderSetting?.setting_value === 'rating' ? 'rating' : 'latest';
+  const byDisplayOrder = (listingType) => {
+    let query = pub().eq('listing_type', listingType);
+    if (featuredOrder === 'rating') {
+      query = query.order('avg_rating', { ascending: false, nullsFirst: false }).order('review_count', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false });
+    } else {
+      query = query.order('created_at', { ascending: false });
+    }
+    return query.limit(8);
+  };
   const results = await Promise.all([
     supabaseAdmin.from('categories').select('id, name, slug, icon').order('sort_order'),
-    pub().eq('is_featured', true).order('avg_rating', { ascending: false }).limit(8),
+    byDisplayOrder('business'),
+    byDisplayOrder('startup'),
     pub().gte('review_count', 1).order('avg_rating', { ascending: false }).order('review_count', { ascending: false }).limit(8),
-    pub().order('created_at', { ascending: false }).limit(8),
+    pub().eq('listing_type', 'business').order('created_at', { ascending: false }).limit(8),
     supabaseAdmin.from('plans').select('code, name, description, price_minor, currency, interval, features').eq('is_active', true).order('sort_order'),
     supabaseAdmin.from('businesses').select('id', { count: 'exact', head: true }).eq('status', 'published'),
     supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }),
   ]);
-  const [categories, featured, topRated, latest, plans, bizCount, userCount] = results;
+  const [categories, featured, featuredStartups, topRated, latest, plans, bizCount, userCount] = results;
   const failed = results.find((result) => result.error);
   if (failed?.error) throw failed.error;
-  const featuredIds = new Set((featured.data || []).map((business) => business.id));
-  const businessShowcase = [
-    ...(featured.data || []),
-    ...(latest.data || []).filter((business) => !featuredIds.has(business.id)),
-  ].slice(0, 8);
+  const businessShowcase = (featured.data || []).slice(0, 8);
+  const startupShowcase = (featuredStartups.data || []).slice(0, 8);
   res.set('Cache-Control', 'public, max-age=60');
   res.json({ data: {
-    categories: categories.data, featured: businessShowcase, topRated: topRated.data, latest: latest.data, plans: plans.data,
+    categories: categories.data, featured: businessShowcase, featuredStartups: startupShowcase, topRated: topRated.data, latest: latest.data, plans: plans.data,
     stats: { businesses: bizCount.count, users: userCount.count },
   } });
 }));

@@ -10,6 +10,22 @@ r.use(requireAuth, requireAdmin);
 
 const count = (t, f) => { let q = supabaseAdmin.from(t).select('*', { count: 'exact', head: true }); if (f) q = f(q); return q.then((x) => x.count); };
 
+// Homepage featured business/startup ordering
+r.get('/settings/homepage-featured-order', asyncHandler(async (req, res) => {
+  const { data, error } = await supabaseAdmin.from('app_settings').select('setting_value')
+    .eq('setting_key', 'homepage_featured_order').maybeSingle();
+  if (error) throw error;
+  res.json({ data: { order: data?.setting_value === 'rating' ? 'rating' : 'latest' } });
+}));
+
+r.patch('/settings/homepage-featured-order', validate(z.object({ order: z.enum(['latest', 'rating']) })), asyncHandler(async (req, res) => {
+  const { data, error } = await supabaseAdmin.from('app_settings').upsert({
+    setting_key: 'homepage_featured_order', setting_value: req.body.order, updated_by: req.user.id, updated_at: new Date().toISOString(),
+  }, { onConflict: 'setting_key' }).select('setting_value').single();
+  if (error) throw error;
+  res.json({ data: { order: data.setting_value } });
+}));
+
 // GET /api/admin/stats
 r.get('/stats', asyncHandler(async (req, res) => {
   const [users, businesses, published, reviews, paid] = await Promise.all([
