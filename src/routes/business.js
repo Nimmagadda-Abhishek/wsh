@@ -7,9 +7,9 @@ import { ApiError, asyncHandler, getPage, pageMeta, slugify, clean, isUuid, isAd
 import { upload, uploadImage } from '../utils/upload.js';
 
 const r = Router();
-const MAX_BUSINESSES_PER_USER = 5;
+const MAX_LISTINGS_PER_TYPE = 2;
 
-const LIST_FIELDS = 'id, name, slug, description, logo_url, cover_url, city, state, listing_type, established_year, employee_count, map_url, products, gallery, startup_details, avg_rating, review_count, is_verified, is_featured, category:categories(id, name, slug)';
+const LIST_FIELDS = 'id, name, slug, description, logo_url, cover_url, city, state, listing_type, established_year, employee_count, map_url, products, gallery, startup_details, avg_rating, review_count, is_verified, is_featured, category:categories(id, name, slug), owner:profiles!businesses_owner_id_fkey(id, full_name, username, avatar_url)';
 
 const hoursSchema = z.record(z.string(), z.object({ open: z.string().optional(), close: z.string().optional(), closed: z.boolean().optional() }));
 const productSchema = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(1000), image: z.string().url().nullable().optional(), price: z.string().trim().max(50).optional() });
@@ -107,8 +107,10 @@ r.get('/mine', requireAuth, requireApproved, asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------- create
 // POST /api/businesses  (created as draft)
 r.post('/', requireAuth, requireApproved, validate(bodySchema.required({ name: true })), asyncHandler(async (req, res) => {
-  const { count } = await supabaseAdmin.from('businesses').select('id', { count: 'exact', head: true }).eq('owner_id', req.user.id);
-  if (count >= MAX_BUSINESSES_PER_USER) throw new ApiError(403, `You can create up to ${MAX_BUSINESSES_PER_USER} businesses`);
+  const listingType = req.body.listingType || 'business';
+  const { count, error: countError } = await supabaseAdmin.from('businesses').select('id', { count: 'exact', head: true }).eq('owner_id', req.user.id).eq('listing_type', listingType);
+  if (countError) throw countError;
+  if ((count || 0) >= MAX_LISTINGS_PER_TYPE) throw new ApiError(403, `You can create up to 2 ${listingType === 'startup' ? 'startups' : 'businesses'}.`);
 
   const { data, error } = await supabaseAdmin.from('businesses')
     .insert({ ...toRow(req.body), owner_id: req.user.id, slug: slugify(req.body.name), status: 'draft' }).select().single();
@@ -151,7 +153,12 @@ r.post('/:id/view', asyncHandler(async (req, res) => {
 
 // ---------------------------------------------------------------- update / delete / publish
 r.patch('/:id', requireAuth, requireApproved, validate(bodySchema), asyncHandler(async (req, res) => {
-  await loadOwnedBusiness(req.params.id, req.user);
+  const currentBusiness = await loadOwnedBusiness(req.params.id, req.user);
+  if (req.body.listingType && req.body.listingType !== currentBusiness.listing_type) {
+    const { count, error: countError } = await supabaseAdmin.from('businesses').select('id', { count: 'exact', head: true }).eq('owner_id', req.user.id).eq('listing_type', req.body.listingType).neq('id', currentBusiness.id);
+    if (countError) throw countError;
+    if ((count || 0) >= MAX_LISTINGS_PER_TYPE) throw new ApiError(403, `You can have up to 2 ${req.body.listingType === 'startup' ? 'startups' : 'businesses'}.`);
+  }
   const patch = toRow(req.body);
   if (!Object.keys(patch).length) throw new ApiError(400, 'Nothing to update');
   const { data, error } = await supabaseAdmin.from('businesses').update(patch).eq('id', req.params.id).select().single();
@@ -306,3 +313,4 @@ r.delete('/:id/favorite', requireAuth, requireApproved, asyncHandler(async (req,
 }));
 
 export default r;
+

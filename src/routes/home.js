@@ -3,7 +3,12 @@ import { supabaseAdmin } from '../config/supabase.js';
 import { asyncHandler } from '../utils/helpers.js';
 
 const r = Router();
-const CARD = 'id, name, slug, description, logo_url, cover_url, city, listing_type, established_year, avg_rating, review_count, is_verified, is_featured, category:categories(name, slug)';
+const LISTING_CATEGORY_SLUGS = [
+  'real-estate-construction', 'finance-insurance', 'manufacturing', 'agriculture-farming',
+  'logistics-transport', 'travel-hospitality', 'marketing-media', 'legal-accounting',
+  'wholesale-distribution', 'energy-sustainability',
+];
+const CARD = 'id, name, slug, description, logo_url, cover_url, city, listing_type, established_year, avg_rating, review_count, is_verified, is_featured, category:categories(name, slug), owner:profiles!businesses_owner_id_fkey(id, full_name, username, avatar_url)';
 
 // GET /api/home  – everything the landing page needs in one call
 r.get('/', asyncHandler(async (req, res) => {
@@ -22,7 +27,7 @@ r.get('/', asyncHandler(async (req, res) => {
     return query.limit(8);
   };
   const results = await Promise.all([
-    supabaseAdmin.from('categories').select('id, name, slug, icon').order('sort_order'),
+    supabaseAdmin.from('categories').select('id, name, slug, icon').in('slug', LISTING_CATEGORY_SLUGS).order('sort_order'),
     byDisplayOrder('business'),
     byDisplayOrder('startup'),
     pub().gte('review_count', 1).order('avg_rating', { ascending: false }).order('review_count', { ascending: false }).limit(8),
@@ -45,7 +50,7 @@ r.get('/', asyncHandler(async (req, res) => {
 
 // GET /api/home/categories
 r.get('/categories', asyncHandler(async (req, res) => {
-  const { data, error } = await supabaseAdmin.from('categories').select('id, name, slug, icon').order('sort_order');
+  const { data, error } = await supabaseAdmin.from('categories').select('id, name, slug, icon').in('slug', LISTING_CATEGORY_SLUGS).order('sort_order');
   if (error) throw error;
   res.set('Cache-Control', 'public, max-age=300');
   res.json({ data });
@@ -57,7 +62,7 @@ r.get('/search', asyncHandler(async (req, res) => {
   if (s.length < 2) return res.json({ data: { businesses: [], categories: [] } });
   const [b, c] = await Promise.all([
     supabaseAdmin.from('businesses').select('id, name, slug, logo_url, city').eq('status', 'published').ilike('name', `%${s}%`).limit(6),
-    supabaseAdmin.from('categories').select('id, name, slug').ilike('name', `%${s}%`).limit(4),
+    supabaseAdmin.from('categories').select('id, name, slug').in('slug', LISTING_CATEGORY_SLUGS).ilike('name', `%${s}%`).limit(4),
   ]);
   res.json({ data: { businesses: b.data, categories: c.data } });
 }));

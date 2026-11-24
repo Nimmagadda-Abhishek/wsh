@@ -266,17 +266,17 @@ on conflict (id) do nothing;
 
 -- ---------- seed data ----------
 insert into public.categories (name, slug, icon, sort_order) values
- ('Restaurants & Cafes','restaurants-cafes','utensils',1),
- ('Retail & Shopping','retail-shopping','shopping-bag',2),
- ('Health & Wellness','health-wellness','heart',3),
- ('Education & Training','education-training','book',4),
- ('Professional Services','professional-services','briefcase',5),
- ('Home Services','home-services','home',6),
- ('Technology & IT','technology-it','cpu',7),
- ('Beauty & Salon','beauty-salon','scissors',8),
- ('Automotive','automotive','car',9),
- ('Events & Entertainment','events-entertainment','music',10)
-on conflict do nothing;
+ ('Real Estate & Construction','real-estate-construction','building-2',1),
+ ('Finance & Insurance','finance-insurance','landmark',2),
+ ('Manufacturing','manufacturing','factory',3),
+ ('Agriculture & Farming','agriculture-farming','leaf',4),
+ ('Logistics & Transport','logistics-transport','truck',5),
+ ('Travel & Hospitality','travel-hospitality','hotel',6),
+ ('Marketing & Media','marketing-media','megaphone',7),
+ ('Legal & Accounting','legal-accounting','scale',8),
+ ('Wholesale & Distribution','wholesale-distribution','package',9),
+ ('Energy & Sustainability','energy-sustainability','zap',10)
+on conflict (name) do update set slug = excluded.slug, icon = excluded.icon, sort_order = excluded.sort_order;
 
 insert into public.plans (code, name, description, price_minor, interval, features, sort_order) values
  ('free','Free','Get listed on the portal',0,'month','{"max_services":5,"featured":false,"analytics":false}',1),
