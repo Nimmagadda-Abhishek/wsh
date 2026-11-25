@@ -177,6 +177,13 @@ r.delete('/:id', requireAuth, requireApproved, asyncHandler(async (req, res) => 
 r.post('/:id/publish', requireAuth, requireApproved, asyncHandler(async (req, res) => {
   const biz = await loadOwnedBusiness(req.params.id, req.user);
   if (biz.status === 'suspended') throw new ApiError(403, 'This business is suspended. Contact support.');
+  const { data: membership, error: membershipError } = await supabaseAdmin.from('account_memberships')
+    .select('status, current_period_end, plan:plans(code)').eq('user_id', req.user.id).maybeSingle();
+  if (membershipError) throw membershipError;
+  const planCode = membership?.plan?.code;
+  if (!membership || membership.status !== 'active' || !['member_monthly', 'member_yearly'].includes(planCode)
+    || !membership.current_period_end || new Date(membership.current_period_end) <= new Date())
+    throw new ApiError(402, 'Choose and pay for a membership plan before publishing this listing.');
   const missing = ['description', 'category_id', 'city'].filter((f) => !biz[f]);
   if (!biz.phone && !biz.email) missing.push('phone or email');
   if (missing.length) throw new ApiError(422, 'Complete your business profile before publishing', { missing });

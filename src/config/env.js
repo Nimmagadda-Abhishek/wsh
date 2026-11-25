@@ -31,6 +31,8 @@ export const env = {
   paymentsEnabled: process.env.PAYMENTS_ENABLED !== 'false',
   rzpKeyId: process.env.RAZORPAY_KEY_ID || '',
   rzpKeySecret: process.env.RAZORPAY_KEY_SECRET || '',
+  rzpMonthlyPlanId: process.env.RAZORPAY_MONTHLY_PLAN_ID || '',
+  rzpYearlyPlanId: process.env.RAZORPAY_YEARLY_PLAN_ID || '',
   // Optional when the Razorpay webhook is not configured; browser payment verification remains available.
   rzpWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
 };

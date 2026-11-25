@@ -1,13 +1,13 @@
 # WS Portal – Node.js + Supabase Backend
 
-Express API on top of Supabase (Postgres, Auth, Storage). Payments are paused; signup, account approval, and business listings are free.
+Express API on top of Supabase (Postgres, Auth, Storage). Paid memberships are required before a business or startup can be published.
 
 ## Setup
-1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `supabase/admin_approval_joining_fee.sql`, `supabase/member_directories.sql`, `supabase/business_listing_fee.sql`, `supabase/signup_fee_payment_type.sql`, `supabase/founder_profile_social_links.sql`, `supabase/business_reviews.sql`, `supabase/startup_details.sql`, and `supabase/homepage_featured_order.sql`. For existing databases, also apply `supabase/business_portfolio_fields.sql` and `supabase/business_mission_vision.sql`.
+1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `admin_approval_joining_fee.sql`, `member_directories.sql`, `business_listing_fee.sql`, `signup_fee_payment_type.sql`, `founder_profile_social_links.sql`, `business_reviews.sql`, `startup_details.sql`, `homepage_featured_order.sql`, `business_portfolio_fields.sql`, `business_mission_vision.sql`, and `membership_listing_plans.sql` before deploying.
 2. Supabase **Auth > URL Configuration**: add `https://warangal-startups.vercel.app` to Site URL / Redirect URLs (the previous `https://ws-portel.web.app` origin is also accepted).
-3. `cp .env.example .env` and fill in the Supabase keys (Supabase *Project Settings > API*). Leave payments disabled unless intentionally re-enabled later.
+3. `cp .env.example .env` and fill in the Supabase keys (Supabase *Project Settings > API*) and Razorpay keys. Create a ₹299 monthly plan and a ₹5,200 yearly plan in Razorpay, then set their IDs as `RAZORPAY_MONTHLY_PLAN_ID` and `RAZORPAY_YEARLY_PLAN_ID`; keep the same test/live mode for keys and plans. Set `PAYMENTS_ENABLED=true`.
 4. `npm install && npm run dev` → http://localhost:4000/health
-5. The ₹2 checkout requires Razorpay credentials and `PAYMENTS_ENABLED=true`. Use live credentials only after Razorpay has approved and activated the merchant account; use test credentials for development.
+5. Account memberships are ₹3,100 for the first monthly payment followed by ₹299/month autopay, or ₹5,200 with yearly autopay. One account membership applies to all businesses and startups owned by the account. Configure Razorpay webhooks for payment.captured, payment.failed, order.paid, subscription.charged, subscription.halted, and subscription.cancelled. Use test credentials for development and live credentials after Razorpay activates the merchant account.
 6. Create your own account in the portal and verify its email. Then grant it admin access from the backend folder with `npm run seed:admin -- your@email.com`. This script only promotes an existing, email-verified account; it never creates credentials. Keep the service-role key private.
 7. Schedule `select public.expire_subscriptions();` daily (pg_cron or any cron).
 
@@ -42,19 +42,19 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 | | GET `/:id/reviews` · POST `/:id/reviews` `{rating,comment}` · DELETE `/:id/reviews/mine` | ✔ for writes |
 | | POST/DELETE `/:id/favorite` | ✔ |
 | **Payments** | GET `/api/payments/signup/status` · POST `/api/payments/signup/checkout` (authenticated, pending accounts allowed) | ✔ |
-| | POST `/api/payments/verify` (server verifies Razorpay signature, captured status, ₹2 amount, and ownership) · POST `/api/payments/webhook` | signup account may verify before admin approval |
-| | GET `/api/payments/plans` · GET `/api/payments/history` · `/subscription/:businessId` · POST `/api/payments/checkout` | Paid plan checkout returns 410; free plan changes remain available |
-| | POST `/api/payments/listing-fee/checkout` | Removed; returns 410 because business listings are free |
+| | POST `/api/payments/verify` (server verifies Razorpay signature, captured amount, and ownership) · POST `/api/payments/webhook` | signup account may verify before admin approval |
+| | GET `/api/payments/plans` · GET `/api/payments/membership` · GET `/api/payments/history` · `/subscription/:businessId` · POST `/api/payments/checkout` `{planCode}` | Account level monthly or yearly Razorpay autopay |
+| | POST `/api/payments/listing-fee/checkout` | Legacy route; membership subscription checkout replaces this listing-specific payment |
 | **Admin** | GET `/api/admin/stats` `/users` `/businesses` `/payments?status=created\|paid\|failed\|refunded` (paginated business-plan payment records) · PATCH `/users/:id/role` `/businesses/:id` · DELETE `/reviews/:id` | ✔ admin |
 | | PATCH `/api/admin/users/:id/approval` `{status: approved\|rejected, note?}` | ✔ admin |
 
 ## Signup and admin approval
-Signup and account approval are free. Business creation and publishing are also free. Public business listings depend on published status, not the legacy listing-fee flag. The member type is saved alongside each account; approved founders and business owners appear in the founders directory, while approved investors and mentors appear in the investors directory.
+Signup and account approval are free. Business creation is free; publishing requires an active monthly or yearly membership. The member type is saved alongside each account; approved founders and business owners appear in the founders directory, while approved investors and mentors appear in the investors directory.
 
 New accounts get `profiles.approval_status = 'pending'`. Until an administrator approves them in the `/#/admin` panel, protected profile, business, and subscription API routes return `403` with an approval status. Administrators can review users, approve or reject accounts, and inspect user and business records. Existing accounts remain approved when applying the migration. To bootstrap the first admin, sign up and verify an account, then run `npm run seed:admin -- your@email.com` from this backend directory. Sign in at the WS Hub portal using that account's normal email/password or configured social sign-in; the Admin link appears in the navigation and `/#/admin` opens the console. The browser cannot grant itself admin access.
 
 ## Notes / assumptions
-- Plans (Free / Pro ₹499 / Premium ₹999) and categories are seed data in `schema.sql`. Edit freely.
+- Membership plans (₹3,100 first monthly payment then ₹299 monthly autopay, or ₹5,200 auto-renewing yearly) and categories are seeded in `schema.sql` and `membership_listing_plans.sql`. One active membership is stored against the user account and applies to all listings they own.
 - Writes go through this API with the service-role key; RLS policies protect direct client access.
 - Business lifecycle: `draft` → `published` (requires description, category, city, contact) → `suspended` (admin only).
 

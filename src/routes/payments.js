@@ -23,19 +23,21 @@ const safeEqual = (a, b) => {
 };
 const hmac = (secret, data) => crypto.createHmac('sha256', secret).update(data).digest('hex');
 
-// Activates (or renews) a business subscription. Idempotent via upsert on business_id.
-async function activateSubscription(biz, plan, userId) {
+// Activates one membership for the account, shared by every listing the account owns.
+async function activateAccountMembership(plan, userId, razorpaySubscriptionId = null) {
   let end = null;
   if (plan.price_minor > 0) {
     end = new Date();
     plan.interval === 'year' ? end.setFullYear(end.getFullYear() + 1) : end.setMonth(end.getMonth() + 1);
   }
-  const { error } = await supabaseAdmin.from('subscriptions').upsert({
-    business_id: biz.id, user_id: userId, plan_id: plan.id, status: 'active',
+  const { error } = await supabaseAdmin.from('account_memberships').upsert({
+    user_id: userId, plan_id: plan.id, status: 'active',
     current_period_start: new Date().toISOString(), current_period_end: end?.toISOString() ?? null,
-  }, { onConflict: 'business_id' });
+    razorpay_subscription_id: razorpaySubscriptionId,
+  }, { onConflict: 'user_id' });
   if (error) throw error;
-  await supabaseAdmin.from('businesses').update({ plan_code: plan.code, is_featured: plan.features?.featured === true }).eq('id', biz.id);
+  const { error: businessError } = await supabaseAdmin.from('businesses').update({ plan_code: plan.code, is_featured: plan.features?.featured === true, listing_fee_paid: true }).eq('owner_id', userId);
+  if (businessError) throw businessError;
 }
 
 // Marks a payment paid exactly once, then activates the plan. Safe to call from verify AND webhook.
@@ -84,13 +86,10 @@ async function fulfillPayment(orderId, paymentId) {
     return claimed;
   }
 
-  const [{ data: plan }, { data: biz }] = await Promise.all([
-    supabaseAdmin.from('plans').select('*').eq('id', pay.plan_id).single(),
-    supabaseAdmin.from('businesses').select('*').eq('id', pay.business_id).single(),
-  ]);
-  if (plan && biz) {
-    await activateSubscription(biz, plan, pay.user_id);
-    await notify(pay.user_id, 'Payment successful', `${plan.name} plan is now active for ${biz.name}.`, { paymentId: pay.id });
+  const { data: plan } = await supabaseAdmin.from('plans').select('*').eq('id', pay.plan_id).single();
+  if (plan && ['member_monthly', 'member_yearly'].includes(plan.code)) {
+    await activateAccountMembership(plan, pay.user_id, orderId);
+    await notify(pay.user_id, 'Payment successful', `${plan.name} is now active for your WS Hub account.`, { paymentId: pay.id });
   }
   return claimed;
 }
@@ -110,22 +109,37 @@ r.get('/signup/status', requireAuth, asyncHandler(async (req, res) => {
 r.post('/signup/checkout', requireAuth, validate(z.object({})), asyncHandler(async (req, res) => {
   res.json({ data: { paid: true, feeRequired: false, payment: null, amountMinor: 0, currency: 'INR' } });
 }));
-// POST /api/payments/checkout  { planCode, businessId } -> Razorpay order
-r.post('/checkout', requireAuth, requireApproved, validate(z.object({ planCode: z.string().min(1), businessId: z.string().uuid() })),
+// POST /api/payments/checkout { planCode } -> account-level Razorpay subscription
+r.post('/checkout', requireAuth, requireApproved, validate(z.object({ planCode: z.enum(['member_monthly', 'member_yearly']) })),
   asyncHandler(async (req, res) => {
-    const { planCode, businessId } = req.body;
+    const { planCode } = req.body;
     const { data: plan } = await supabaseAdmin.from('plans').select('*').eq('code', planCode).eq('is_active', true).maybeSingle();
     if (!plan) throw new ApiError(404, 'Plan not found');
-    const biz = await loadOwnedBusiness(businessId, req.user);
-
-    if (plan.price_minor === 0) {
-      const { data: sub } = await supabaseAdmin.from('subscriptions').select('*').eq('business_id', biz.id).eq('status', 'active').maybeSingle();
-      if (sub?.current_period_end && new Date(sub.current_period_end) > new Date() && biz.plan_code !== 'free')
-        throw new ApiError(409, 'A paid plan is still active. It will expire at the end of the billing period.');
-      await activateSubscription(biz, plan, req.user.id);
-      return res.json({ data: { free: true, plan: plan.code } });
-    }
-    throw new ApiError(410, 'Paid memberships are unavailable while payments are paused.');
+    const { data: currentMembership } = await supabaseAdmin.from('account_memberships')
+      .select('status, current_period_end').eq('user_id', req.user.id).maybeSingle();
+    if (currentMembership?.status === 'active' && new Date(currentMembership.current_period_end) > new Date())
+      throw new ApiError(409, 'Your account already has an active auto-renewing membership. Contact WS Hub support to change billing plans.');
+    requirePaymentsEnabled();
+    const razorpay = getRazorpay();
+    const isMonthly = plan.code === 'member_monthly';
+    const razorpayPlanId = isMonthly ? env.rzpMonthlyPlanId : env.rzpYearlyPlanId;
+    if (!razorpayPlanId) throw new ApiError(503, `Autopay is not configured. Set ${isMonthly ? 'RAZORPAY_MONTHLY_PLAN_ID' : 'RAZORPAY_YEARLY_PLAN_ID'} to the matching Razorpay plan.`);
+    const gatewayPlan = await razorpay.plans.fetch(razorpayPlanId);
+    const expectedPeriod = isMonthly ? 'monthly' : 'yearly';
+    const expectedAmount = isMonthly ? 29900 : 520000;
+    if (gatewayPlan.period !== expectedPeriod || gatewayPlan.interval !== 1 || gatewayPlan.item?.amount !== expectedAmount || gatewayPlan.item?.currency !== 'INR')
+      throw new ApiError(503, `The configured Razorpay plan must charge ₹${isMonthly ? '299 monthly' : '5,200 yearly'} in INR.`);
+    const subscription = await razorpay.subscriptions.create({
+      plan_id: razorpayPlanId, total_count: 1200, quantity: 1, customer_notify: true,
+      ...(isMonthly ? { addons: [{ item: { name: 'Initial membership payment', amount: 280100, currency: 'INR' } }] } : {}),
+      notes: { plan_code: plan.code, user_id: req.user.id },
+    });
+    const { error } = await supabaseAdmin.from('payments').insert({
+      user_id: req.user.id, business_id: null, plan_id: plan.id,
+      razorpay_order_id: subscription.id, amount: plan.price_minor, currency: plan.currency, status: 'created',
+    });
+    if (error) throw error;
+    return res.status(201).json({ data: { subscriptionId: subscription.id, amount: plan.price_minor, currency: plan.currency, keyId: env.rzpKeyId, plan: { code: plan.code, name: plan.name, interval: plan.interval }, prefill: { email: req.user.email } } });
   }));
 
 // POST /api/payments/listing-fee/checkout { businessId } -> fixed ₹2 Razorpay order
@@ -134,24 +148,27 @@ r.post('/listing-fee/checkout', requireAuth, requireApproved,
 
 // POST /api/payments/verify  – call after Razorpay Checkout success handler
 r.post('/verify', requireAuth, validate(z.object({
-  razorpay_order_id: z.string(), razorpay_payment_id: z.string(), razorpay_signature: z.string(),
-})), asyncHandler(async (req, res) => {
+  razorpay_order_id: z.string().optional(), razorpay_subscription_id: z.string().optional(), razorpay_payment_id: z.string(), razorpay_signature: z.string(),
+}).refine((body) => Boolean(body.razorpay_order_id) !== Boolean(body.razorpay_subscription_id), 'Provide exactly one order or subscription ID')), asyncHandler(async (req, res) => {
   requirePaymentsEnabled();
-  const { razorpay_order_id: oid, razorpay_payment_id: pid, razorpay_signature: sig } = req.body;
-  if (!safeEqual(hmac(env.rzpKeySecret, `${oid}|${pid}`), sig)) throw new ApiError(400, 'Invalid payment signature');
-  const { data: ownSignup } = await supabaseAdmin.from('signup_payments').select('user_id, amount_minor').eq('razorpay_order_id', oid).maybeSingle();
-  const { data: own } = ownSignup ? { data: ownSignup } : await supabaseAdmin.from('payments').select('user_id, amount, currency').eq('razorpay_order_id', oid).maybeSingle();
+  const { razorpay_order_id: oid, razorpay_subscription_id: sid, razorpay_payment_id: pid, razorpay_signature: sig } = req.body;
+  const gatewayId = sid || oid;
+  if (!safeEqual(hmac(env.rzpKeySecret, sid ? `${pid}|${sid}` : `${oid}|${pid}`), sig)) throw new ApiError(400, 'Invalid payment signature');
+  const { data: ownSignup } = oid ? await supabaseAdmin.from('signup_payments').select('user_id, amount_minor').eq('razorpay_order_id', oid).maybeSingle() : { data: null };
+  const { data: own } = ownSignup ? { data: ownSignup } : await supabaseAdmin.from('payments').select('user_id, amount, currency, plan:plans(code)').eq('razorpay_order_id', gatewayId).maybeSingle();
   if (!own || own.user_id !== req.user.id) throw new ApiError(404, 'Order not found');
+  if (sid && !['member_monthly', 'member_yearly'].includes(own.plan?.code)) throw new ApiError(400, 'Subscription does not match a membership plan');
   if (!ownSignup) {
     const { data: profile } = await supabaseAdmin.from('profiles').select('role, approval_status').eq('id', req.user.id).maybeSingle();
-    if (profile?.role !== 'admin' && profile?.approval_status !== 'approved') throw new ApiError(403, 'Payments are unavailable while payments are paused');
+    if (profile?.role !== 'admin' && profile?.approval_status !== 'approved') throw new ApiError(403, 'Payments are available only to approved accounts.');
   }
-  const remotePayment = await getRazorpay().payments.fetch(pid);
+  let remotePayment = await getRazorpay().payments.fetch(pid);
+  if (sid && remotePayment.status === 'authorized') remotePayment = await getRazorpay().payments.capture(pid, own.amount, own.currency);
   const expectedAmount = ownSignup ? ownSignup.amount_minor : own.amount;
   const expectedCurrency = ownSignup ? 'INR' : own.currency;
-  if (remotePayment.order_id !== oid || remotePayment.amount !== expectedAmount || remotePayment.currency !== expectedCurrency || remotePayment.status !== 'captured')
+  if ((!sid && remotePayment.order_id !== oid) || (sid && remotePayment.subscription_id !== sid) || remotePayment.amount !== expectedAmount || remotePayment.currency !== expectedCurrency || remotePayment.status !== 'captured')
     throw new ApiError(400, ownSignup ? 'Payment is not captured for this ₹2 order yet. Please retry shortly.' : 'Payment is not captured for the expected order amount yet.');
-  const pay = await fulfillPayment(oid, pid);
+  const pay = await fulfillPayment(gatewayId, pid);
   res.json({ data: { status: pay.status, message: 'Payment verified' } });
 }));
 
@@ -165,11 +182,17 @@ r.get('/history', requireAuth, requireApproved, asyncHandler(async (req, res) =>
   res.json({ data, meta: pageMeta(pg, count) });
 }));
 
-// GET /api/payments/subscription/:businessId
+// GET /api/payments/subscription/:businessId (account membership for compatibility with listing editor)
 r.get('/subscription/:businessId', requireAuth, requireApproved, asyncHandler(async (req, res) => {
-  const biz = await loadOwnedBusiness(req.params.businessId, req.user);
-  const { data } = await supabaseAdmin.from('subscriptions').select('*, plan:plans(*)').eq('business_id', biz.id).maybeSingle();
+  await loadOwnedBusiness(req.params.businessId, req.user);
+  const { data } = await supabaseAdmin.from('account_memberships').select('*, plan:plans(*)').eq('user_id', req.user.id).maybeSingle();
   res.json({ data: data ?? { plan: { code: 'free' }, status: 'active' } });
+}));
+
+r.get('/membership', requireAuth, requireApproved, asyncHandler(async (req, res) => {
+  const { data, error } = await supabaseAdmin.from('account_memberships').select('*, plan:plans(*)').eq('user_id', req.user.id).maybeSingle();
+  if (error) throw error;
+  res.json({ data: data ?? { plan: { code: 'free' }, status: 'inactive' } });
 }));
 
 // ---- Webhook (mounted in app.js with express.raw BEFORE express.json) ----
@@ -183,10 +206,27 @@ export const webhookHandler = asyncHandler(async (req, res) => {
 
   if (event.event === 'payment.captured' || event.event === 'order.paid') {
     const pay = p ?? event.payload?.order?.entity;
-    const orderId = p?.order_id ?? pay?.id;
+    const orderId = p?.subscription_id ?? p?.order_id ?? pay?.id;
     if (orderId) await fulfillPayment(orderId, p?.id ?? null);
-  } else if (event.event === 'payment.failed' && p?.order_id) {
-    await supabaseAdmin.from('payments').update({ status: 'failed', razorpay_payment_id: p.id }).eq('razorpay_order_id', p.order_id).eq('status', 'created');
+  } else if (event.event === 'payment.failed' && (p?.subscription_id || p?.order_id)) {
+    await supabaseAdmin.from('payments').update({ status: 'failed', razorpay_payment_id: p.id }).eq('razorpay_order_id', p.subscription_id || p.order_id).eq('status', 'created');
+  } else if (event.event === 'subscription.charged') {
+    const sub = event.payload?.subscription?.entity;
+    if (sub?.id) {
+      const start = sub.current_start ? new Date(sub.current_start * 1000).toISOString() : new Date().toISOString();
+      const end = sub.current_end ? new Date(sub.current_end * 1000) : new Date(start);
+      const { data: local } = await supabaseAdmin.from('account_memberships').select('user_id, plan:plans(interval)').eq('razorpay_subscription_id', sub.id).maybeSingle();
+      if (local) {
+        if (!sub.current_end) local.plan?.interval === 'year' ? end.setFullYear(end.getFullYear() + 1) : end.setMonth(end.getMonth() + 1);
+        await supabaseAdmin.from('account_memberships').update({ status: 'active', current_period_start: start, current_period_end: end.toISOString() }).eq('user_id', local.user_id);
+        const { data: plan } = await supabaseAdmin.from('account_memberships').select('plan:plans(code, features)').eq('user_id', local.user_id).single();
+        await supabaseAdmin.from('businesses').update({ plan_code: plan?.plan?.code, is_featured: plan?.plan?.features?.featured === true, listing_fee_paid: true }).eq('owner_id', local.user_id);
+      }
+    }
+  } else if ((event.event === 'subscription.halted' || event.event === 'subscription.cancelled') && event.payload?.subscription?.entity?.id) {
+    const subId = event.payload.subscription.entity.id;
+    const { data: local } = await supabaseAdmin.from('account_memberships').update({ status: event.event === 'subscription.cancelled' ? 'cancelled' : 'expired' }).eq('razorpay_subscription_id', subId).select('user_id').maybeSingle();
+    if (local?.user_id) await supabaseAdmin.from('businesses').update({ status: 'draft', plan_code: 'free', listing_fee_paid: false, is_featured: false }).eq('owner_id', local.user_id);
   }
   res.json({ received: true });
 });

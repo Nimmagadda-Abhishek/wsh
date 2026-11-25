@@ -217,6 +217,18 @@ create table public.subscriptions (
   status text not null default 'active' check (status in ('active','expired','cancelled')),
   current_period_start timestamptz not null default now(),
   current_period_end timestamptz,
+  razorpay_subscription_id text unique,
+  created_at timestamptz not null default now()
+);
+
+-- Membership belongs to the account and is shared by all businesses/startups it owns.
+create table public.account_memberships (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  plan_id uuid not null references public.plans(id),
+  status text not null default 'active' check (status in ('active','expired','cancelled')),
+  current_period_start timestamptz not null default now(),
+  current_period_end timestamptz not null,
+  razorpay_subscription_id text unique,
   created_at timestamptz not null default now()
 );
 
@@ -228,6 +240,14 @@ $$;
 -- Schedule with pg_cron (daily) or call from a cron job.
 create or replace function public.expire_subscriptions() returns void language plpgsql as $$
 begin
+  update public.businesses set status = 'draft', listing_fee_paid = false
+  where owner_id in (select user_id from public.account_memberships where status = 'active' and current_period_end < now());
+  update public.businesses set plan_code = 'free', is_featured = false
+  where owner_id in (select user_id from public.account_memberships where status = 'active' and current_period_end < now());
+  update public.account_memberships set status = 'expired' where status = 'active' and current_period_end < now();
+  update public.businesses set status = 'draft', listing_fee_paid = false
+  where id in (select s.business_id from public.subscriptions s join public.plans p on p.id = s.plan_id
+    where s.status = 'active' and s.current_period_end < now() and p.code in ('member_monthly','member_yearly'));
   update public.businesses set plan_code = 'free', is_featured = false
   where id in (select business_id from public.subscriptions where status = 'active' and current_period_end < now());
   update public.subscriptions set status = 'expired' where status = 'active' and current_period_end < now();
@@ -246,6 +266,7 @@ alter table public.favorites enable row level security;
 alter table public.notifications enable row level security;
 alter table public.payments enable row level security;
 alter table public.subscriptions enable row level security;
+alter table public.account_memberships enable row level security;
 
 create policy "own profile" on public.profiles for select using (auth.uid() = id);
 create policy "public categories" on public.categories for select using (true);
@@ -258,6 +279,7 @@ create policy "own favorites" on public.favorites for select using (auth.uid() =
 create policy "own notifications" on public.notifications for select using (auth.uid() = user_id);
 create policy "own payments" on public.payments for select using (auth.uid() = user_id);
 create policy "own subscriptions" on public.subscriptions for select using (auth.uid() = user_id);
+create policy "own account membership" on public.account_memberships for select using (auth.uid() = user_id);
 -- No insert/update/delete policies: all writes go through the API.
 
 -- ---------- storage buckets ----------
@@ -281,7 +303,9 @@ on conflict (name) do update set slug = excluded.slug, icon = excluded.icon, sor
 insert into public.plans (code, name, description, price_minor, interval, features, sort_order) values
  ('free','Free','Get listed on the portal',0,'month','{"max_services":5,"featured":false,"analytics":false}',1),
  ('pro','Pro','More services and analytics',49900,'month','{"max_services":50,"featured":false,"analytics":true}',2),
- ('premium','Premium','Featured placement on the homepage',99900,'month','{"max_services":500,"featured":true,"analytics":true}',3)
+ ('premium','Premium','Featured placement on the homepage',99900,'month','{"max_services":500,"featured":true,"analytics":true}',3),
+ ('member_monthly','WS Hub Monthly Membership','₹3,100 first payment, then ₹299 monthly autopay',310000,'month','{"max_services":50,"featured":false,"analytics":true,"monthly_recurring_minor":29900,"first_payment_minor":310000}',4),
+ ('member_yearly','WS Hub Yearly Membership','₹5,200 auto-renewing each year',520000,'year','{"max_services":50,"featured":false,"analytics":true,"yearly_recurring_minor":520000}',5)
 on conflict do nothing;
 
 -- To make yourself an admin after signing up:
