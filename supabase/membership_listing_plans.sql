@@ -12,6 +12,7 @@ create table if not exists public.account_memberships (
   created_at timestamptz not null default now()
 );
 alter table public.account_memberships enable row level security;
+drop policy if exists "own account membership" on public.account_memberships;
 create policy "own account membership" on public.account_memberships for select using (auth.uid() = user_id);
 
 insert into public.plans (code, name, description, price_minor, currency, interval, features, is_active, sort_order)
@@ -35,12 +36,12 @@ on conflict (user_id) do update set plan_id = excluded.plan_id, status = exclude
   current_period_start = excluded.current_period_start, current_period_end = excluded.current_period_end,
   razorpay_subscription_id = excluded.razorpay_subscription_id;
 
--- Require existing public listings to have a paid membership too.
-update public.businesses b set status = 'draft'
-where b.status = 'published' and not exists (
-  select 1 from public.account_memberships m
-  where m.user_id = b.owner_id and m.status = 'active' and m.current_period_end > now()
-);
+-- Preserve existing listings that were already published before membership billing.
+-- The earlier migration may have moved these legacy listings to draft; the old
+-- listing_fee_paid flag identifies listings that had already been published.
+update public.businesses
+set status = 'published', listing_fee_paid = true
+where status = 'draft' and listing_fee_paid = true and plan_code = 'free';
 
 create or replace function public.expire_subscriptions() returns void language plpgsql as $$
 begin

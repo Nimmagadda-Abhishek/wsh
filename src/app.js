@@ -13,6 +13,7 @@ import homeRoutes from './routes/home.js';
 import paymentRoutes, { webhookHandler } from './routes/payments.js';
 import adminRoutes from './routes/admin.js';
 import directoryRoutes from './routes/directory.js';
+import eventRoutes from './routes/events.js';
 import shareRoutes from './routes/share.js';
 
 const app = express();
@@ -52,6 +53,7 @@ app.use('/api/home', homeRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/directory', directoryRoutes);
+app.use('/api/events', eventRoutes);
 app.use('/api/share', shareRoutes);
 
 app.use(notFound);

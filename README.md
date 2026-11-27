@@ -3,11 +3,11 @@
 Express API on top of Supabase (Postgres, Auth, Storage). Paid memberships are required before a business or startup can be published.
 
 ## Setup
-1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `admin_approval_joining_fee.sql`, `member_directories.sql`, `business_listing_fee.sql`, `signup_fee_payment_type.sql`, `founder_profile_social_links.sql`, `business_reviews.sql`, `startup_details.sql`, `homepage_featured_order.sql`, `business_portfolio_fields.sql`, `business_mission_vision.sql`, and `membership_listing_plans.sql` before deploying.
+1. Create a Supabase project. In **SQL Editor**, run `supabase/schema.sql`. For an existing installation, apply `admin_approval_joining_fee.sql`, `member_directories.sql`, `business_listing_fee.sql`, `signup_fee_payment_type.sql`, `founder_profile_social_links.sql`, `business_reviews.sql`, `startup_details.sql`, `homepage_featured_order.sql`, `business_portfolio_fields.sql`, `business_mission_vision.sql`, `membership_listing_plans.sql`, and `event_ticketing.sql` before deploying.
 2. Supabase **Auth > URL Configuration**: add `https://warangal-startups.vercel.app` to Site URL / Redirect URLs (the previous `https://ws-portel.web.app` origin is also accepted).
 3. `cp .env.example .env` and fill in the Supabase keys (Supabase *Project Settings > API*) and Razorpay keys. Create a ₹299 monthly plan and a ₹5,200 yearly plan in Razorpay, then set their IDs as `RAZORPAY_MONTHLY_PLAN_ID` and `RAZORPAY_YEARLY_PLAN_ID`; keep the same test/live mode for keys and plans. Set `PAYMENTS_ENABLED=true`.
 4. `npm install && npm run dev` → http://localhost:4000/health
-5. Account memberships are ₹3,100 for the first monthly payment followed by ₹299/month autopay, or ₹5,200 with yearly autopay. One account membership applies to all businesses and startups owned by the account. Configure Razorpay webhooks for payment.captured, payment.failed, order.paid, subscription.charged, subscription.halted, and subscription.cancelled. Use test credentials for development and live credentials after Razorpay activates the merchant account.
+5. Account memberships are ₹3,100 for the first monthly payment followed by ₹299/month autopay, or ₹5,200 with yearly autopay. One account membership applies to all businesses and startups owned by the account. Existing previously published listings remain visible; each account owner must authorize autopay through Razorpay checkout before the account is billed. Configure Razorpay webhooks for payment.captured, payment.failed, order.paid, subscription.charged, subscription.halted, and subscription.cancelled. Use test credentials for development and live credentials after Razorpay activates the merchant account.
 6. Create your own account in the portal and verify its email. Then grant it admin access from the backend folder with `npm run seed:admin -- your@email.com`. This script only promotes an existing, email-verified account; it never creates credentials. Keep the service-role key private.
 7. Schedule `select public.expire_subscriptions();` daily (pg_cron or any cron).
 
@@ -33,6 +33,10 @@ The profile editor sends the API's `fullName` field. Business edit payloads use 
 | | GET `/api/profile/public/:username` | – |
 | **Directory** | GET `/api/directory/founders?page=&limit=` · `/investors?page=&limit=` (approved members and published businesses) · GET `/api/directory/members/:id` | – |
 | | GET `/api/profile/favorites` · GET `/api/profile/notifications` · PATCH `/api/profile/notifications/read` | ✔ |
+| **Events** | GET `/api/events?q=&page=&limit=` · GET `/api/events/:idOrSlug` | – |
+| | POST `/api/events` multipart fields `banner`, `title`, `description`, `startAt` (ISO date/time), `location`, `isFree`, `registrationFee` (rupees), `ticketCapacity` | ✔ approved organizer |
+| | GET `/api/events/mine/hosted` · GET `/api/events/mine/tickets` | ✔ |
+| | POST `/api/events/:eventId/register` `{name,email}` → free ticket or Razorpay order · POST `/api/events/registrations/verify` `{razorpay_order_id,razorpay_payment_id,razorpay_signature}` | ✔ attendee |
 | **Business** | GET `/api/businesses?q=&category=&city=&minRating=&sort=&page=&limit=` | – |
 | | GET `/api/share/business/:slug` (published business logo + synopsis Open Graph preview; browser redirects to the WS Hub profile) | – |
 | | GET `/api/businesses/:idOrSlug` (drafts visible to owner/admin) · POST `/:id/view` | optional |
@@ -55,6 +59,7 @@ New accounts get `profiles.approval_status = 'pending'`. Until an administrator 
 
 ## Notes / assumptions
 - Membership plans (₹3,100 first monthly payment then ₹299 monthly autopay, or ₹5,200 auto-renewing yearly) and categories are seeded in `schema.sql` and `membership_listing_plans.sql`. One active membership is stored against the user account and applies to all listings they own.
+- Event creators need an approved account. Paid ticket orders reserve capacity for 15 minutes; captured payments issue a confirmed ticket code. If payment is captured after capacity has been resold, the registration goes to organizer review rather than overselling.
 - Writes go through this API with the service-role key; RLS policies protect direct client access.
 - Business lifecycle: `draft` → `published` (requires description, category, city, contact) → `suspended` (admin only).
 

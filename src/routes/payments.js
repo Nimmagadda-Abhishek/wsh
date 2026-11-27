@@ -7,6 +7,7 @@ import { env } from '../config/env.js';
 import { requireAuth, requireApproved } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { ApiError, asyncHandler, loadOwnedBusiness, notify, getPage, pageMeta } from '../utils/helpers.js';
+import { cancelFailedEventTicketOrder, fulfillEventTicketOrder } from '../utils/event-tickets.js';
 
 const r = Router();
 const getRazorpay = () => {
@@ -207,9 +208,14 @@ export const webhookHandler = asyncHandler(async (req, res) => {
   if (event.event === 'payment.captured' || event.event === 'order.paid') {
     const pay = p ?? event.payload?.order?.entity;
     const orderId = p?.subscription_id ?? p?.order_id ?? pay?.id;
-    if (orderId) await fulfillPayment(orderId, p?.id ?? null);
+    if (orderId) {
+      const eventTicket = await fulfillEventTicketOrder(orderId, p?.id ?? null);
+      if (!eventTicket) await fulfillPayment(orderId, p?.id ?? null);
+    }
   } else if (event.event === 'payment.failed' && (p?.subscription_id || p?.order_id)) {
-    await supabaseAdmin.from('payments').update({ status: 'failed', razorpay_payment_id: p.id }).eq('razorpay_order_id', p.subscription_id || p.order_id).eq('status', 'created');
+    const orderId = p.subscription_id || p.order_id;
+    const eventTicket = await cancelFailedEventTicketOrder(orderId, p.id);
+    if (!eventTicket) await supabaseAdmin.from('payments').update({ status: 'failed', razorpay_payment_id: p.id }).eq('razorpay_order_id', orderId).eq('status', 'created');
   } else if (event.event === 'subscription.charged') {
     const sub = event.payload?.subscription?.entity;
     if (sub?.id) {
